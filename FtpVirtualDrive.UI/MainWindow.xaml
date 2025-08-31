@@ -1,0 +1,205 @@
+<Window x:Class="FtpVirtualDrive.UI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:FtpVirtualDrive.UI"
+        xmlns:converters="clr-namespace:FtpVirtualDrive.UI.Converters"
+        mc:Ignorable="d"
+        Title="FTP Virtual Drive" Height="600" Width="900" 
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="CanResize">
+    <Window.Resources>
+        <converters:InverseBooleanConverter x:Key="InverseBooleanConverter"/>
+        <converters:BooleanToColorConverter x:Key="BooleanToColorConverter"/>
+        <converters:FileSizeConverter x:Key="FileSizeConverter"/>
+        <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+        <converters:RelativeTimeConverter x:Key="RelativeTimeConverter"/>
+    </Window.Resources>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Connection Panel -->
+        <GroupBox Grid.Row="0" Header="FTP Connection" Margin="10,10,10,5" Padding="10">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Row 1: Host and Port -->
+                <Label Grid.Row="0" Grid.Column="0" Content="Host:" VerticalAlignment="Center"/>
+                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Host}" Margin="5,2" 
+                         IsEnabled="{Binding IsConnected, Converter={StaticResource InverseBooleanConverter}}"/>
+                
+                <Label Grid.Row="0" Grid.Column="2" Content="Port:" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                <TextBox Grid.Row="0" Grid.Column="3" Text="{Binding Port}" Margin="5,2" Width="80" HorizontalAlignment="Left"
+                         IsEnabled="{Binding IsConnected, Converter={StaticResource InverseBooleanConverter}}"/>
+
+                <!-- Row 2: Username and Password -->
+                <Label Grid.Row="1" Grid.Column="0" Content="Username:" VerticalAlignment="Center"/>
+                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Username}" Margin="5,2"
+                         IsEnabled="{Binding IsConnected, Converter={StaticResource InverseBooleanConverter}}"/>
+                
+                <Label Grid.Row="1" Grid.Column="2" Content="Password:" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                <PasswordBox Grid.Row="1" Grid.Column="3" x:Name="PasswordBox" Margin="5,2"
+                             IsEnabled="{Binding IsConnected, Converter={StaticResource InverseBooleanConverter}}"/>
+
+                <!-- Row 3: SSL and Connection Name -->
+                <CheckBox Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Content="Use SSL/TLS (FTPS)" 
+                          IsChecked="{Binding UseSSL}" Margin="5,5,5,2" VerticalAlignment="Center"
+                          IsEnabled="{Binding IsConnected, Converter={StaticResource InverseBooleanConverter}}"/>
+                
+                <Label Grid.Row="2" Grid.Column="2" Content="Connection Name:" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                <TextBox Grid.Row="2" Grid.Column="3" Text="{Binding ConnectionName}" Margin="5,2"
+                         IsEnabled="{Binding IsConnected, Converter={StaticResource InverseBooleanConverter}}"/>
+
+                <!-- Row 4: Buttons -->
+                <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="5" Orientation="Horizontal" 
+                           Margin="0,10,0,0" HorizontalAlignment="Left">
+                    <Button Content="Connect" Command="{Binding ConnectCommand}" Padding="15,5" Margin="0,0,10,0"
+                            IsEnabled="{Binding IsConnecting, Converter={StaticResource InverseBooleanConverter}}"/>
+                    <Button Content="Disconnect" Command="{Binding DisconnectCommand}" Padding="15,5" Margin="0,0,10,0"/>
+                    <Button Content="Save Credentials" Command="{Binding SaveCredentialsCommand}" Padding="15,5" Margin="0,0,10,0"/>
+                    
+                    <Label Content="Saved:" VerticalAlignment="Center" Margin="20,0,5,0"/>
+                    <ComboBox ItemsSource="{Binding SavedConnections}" SelectedItem="{Binding SelectedSavedConnection}" 
+                              Width="150" Margin="0,0,10,0"/>
+                    <Button Content="Load" Command="{Binding LoadCredentialsCommand}" 
+                            CommandParameter="{Binding SelectedSavedConnection}" Padding="10,5"/>
+                </StackPanel>
+            </Grid>
+        </GroupBox>
+
+        <!-- Main Content -->
+        <Grid Grid.Row="1" Margin="10,5,10,5">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="300"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Mount Panel -->
+            <GroupBox Grid.Column="0" Header="Virtual Drive" Padding="10">
+                <StackPanel>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Label Grid.Row="0" Grid.Column="0" Content="Drive Letter:" VerticalAlignment="Center"/>
+                        <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding AvailableDriveLetters}" 
+                                  SelectedItem="{Binding SelectedDriveLetter}" Margin="5,2" Width="60" HorizontalAlignment="Left"/>
+
+                        <Button Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Content="Mount Drive" 
+                                Command="{Binding MountCommand}" Padding="15,8" Margin="0,10,0,5" 
+                                HorizontalAlignment="Stretch"/>
+                        
+                        <Button Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Content="Unmount Drive" 
+                                Command="{Binding UnmountCommand}" Padding="15,8" Margin="0,5,0,0" 
+                                HorizontalAlignment="Stretch"/>
+                    </Grid>
+
+                    <Separator Margin="0,15"/>
+
+                    <TextBlock Text="Status:" FontWeight="Bold" Margin="0,0,0,5"/>
+                    <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <Ellipse Width="12" Height="12" Margin="0,0,5,0" VerticalAlignment="Center">
+                            <Ellipse.Fill>
+                                <SolidColorBrush Color="{Binding IsConnected, Converter={StaticResource BooleanToColorConverter}}"/>
+                            </Ellipse.Fill>
+                        </Ellipse>
+                        <TextBlock Text="FTP Connected" VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                        <Ellipse Width="12" Height="12" Margin="0,0,5,0" VerticalAlignment="Center">
+                            <Ellipse.Fill>
+                                <SolidColorBrush Color="{Binding IsMounted, Converter={StaticResource BooleanToColorConverter}}"/>
+                            </Ellipse.Fill>
+                        </Ellipse>
+                        <TextBlock Text="Drive Mounted" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </StackPanel>
+            </GroupBox>
+
+            <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="LightGray"/>
+
+            <!-- Activity Log Panel -->
+            <GroupBox Grid.Column="2" Header="Activity Log" Padding="10">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+                        <Button Content="Refresh" Command="{Binding RefreshLogsCommand}" Padding="10,5" Margin="0,0,10,0"/>
+                        <Button Content="Export Logs" Command="{Binding ExportLogsCommand}" Padding="10,5" Margin="0,0,10,0"/>
+                        <TextBlock Text="{Binding ActivityLogs.Count, StringFormat='Total: {0} entries'}" 
+                                   VerticalAlignment="Center" Margin="10,0,0,0" FontStyle="Italic"/>
+                    </StackPanel>
+
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding ActivityLogs}" AutoGenerateColumns="False" 
+                              IsReadOnly="True" CanUserSortColumns="True" CanUserResizeColumns="True"
+                              GridLinesVisibility="Horizontal" AlternatingRowBackground="#F5F5F5">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat='HH:mm:ss'}" Width="80"/>
+                            <DataGridTextColumn Header="Operation" Binding="{Binding Operation}" Width="100"/>
+                            <DataGridTextColumn Header="File Path" Binding="{Binding FilePath}" Width="*"/>
+                            <DataGridTextColumn Header="Details" Binding="{Binding Details}" Width="150"/>
+                            <DataGridTextColumn Header="Size" Binding="{Binding FileSize, Converter={StaticResource FileSizeConverter}}" Width="80"/>
+                            <DataGridTemplateColumn Header="Status" Width="60">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Ellipse Width="12" Height="12" HorizontalAlignment="Center">
+                                            <Ellipse.Fill>
+                                                <SolidColorBrush Color="{Binding Success, Converter={StaticResource BooleanToColorConverter}}"/>
+                                            </Ellipse.Fill>
+                                        </Ellipse>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </GroupBox>
+        </Grid>
+
+        <!-- Status Bar -->
+        <StatusBar Grid.Row="2" Background="#F0F0F0">
+            <StatusBarItem>
+                <TextBlock Text="{Binding StatusMessage}"/>
+            </StatusBarItem>
+            <Separator/>
+            <StatusBarItem>
+                <TextBlock Text="{Binding IsConnected, StringFormat='Connected: {0}'}"/>
+            </StatusBarItem>
+            <Separator/>
+            <StatusBarItem>
+                <TextBlock Text="{Binding IsMounted, StringFormat='Mounted: {0}'}"/>
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window>

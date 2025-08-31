@@ -1,0 +1,46 @@
+# .NET Core build output
+bin/
+obj/
+out/
+
+# Visual Studio files
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Visual Studio Code files
+.vscode/
+
+# Rider files
+*.sln.ide/
+
+# Rider/ReSharper cache
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# CodeRush
+*.cr/
+
+# WebStorm
+*.idea/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# User-specific files
+*.user
+
+# Azure Functions
+local.settings.json
