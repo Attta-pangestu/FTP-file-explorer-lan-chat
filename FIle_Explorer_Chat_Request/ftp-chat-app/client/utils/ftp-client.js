@@ -339,19 +339,20 @@ async function writeCache(directoryStructure) {
 
 // Build directory structure with lazy loading (only first level)
 async function buildDirectoryStructure(basePath = '/', maxDepth = 3, currentDepth = 0) {
+  const structure = {
+    name: basePath === '/' ? 'Root' : basePath.split('/').pop(),
+    type: 'directory',
+    path: basePath,
+    files: [],
+    directories: [],
+    isAccessible: true,
+    hasChildren: false,
+    loaded: true,
+    timestamp: new Date().toISOString()
+  };
+  
   try {
     const items = await list(basePath);
-    const structure = {
-      name: basePath === '/' ? 'Root' : basePath.split('/').pop(),
-      type: 'directory',
-      path: basePath,
-      files: [],
-      directories: [],
-      isAccessible: true,
-      hasChildren: false,
-      loaded: true,
-      timestamp: new Date().toISOString()
-    };
     
     for (const item of items) {
       if (item.type === 'file') {
@@ -373,6 +374,7 @@ async function buildDirectoryStructure(basePath = '/', maxDepth = 3, currentDept
           } else {
             console.warn(`Directory ${dirPath} check failed: ${error.message}`);
             isAccessible = false;
+            // Continue processing other directories instead of failing completely
           }
         }
         
@@ -394,13 +396,10 @@ async function buildDirectoryStructure(basePath = '/', maxDepth = 3, currentDept
     return structure;
   } catch (error) {
     console.error(`Error building directory structure for ${basePath}:`, error);
-    return {
-      path: basePath,
-      files: [],
-      directories: [],
-      error: error.message,
-      timestamp: new Date().toISOString()
-    };
+    // Return partial structure with error info instead of empty structure
+    structure.isAccessible = false;
+    structure.error = error.message;
+    return structure;
   }
 }
 
@@ -477,8 +476,8 @@ async function refreshCache() {
   try {
     console.log('Refreshing FTP cache...');
     
-    // Build fresh directory structure (first level only)
-    const structure = await buildDirectoryStructure('/', 3, 0);
+    // Build fresh directory structure (first level only to avoid timeout)
+    const structure = await buildDirectoryStructure('/', 1, 0);
     
     // Write to cache
     await writeCache(structure);
