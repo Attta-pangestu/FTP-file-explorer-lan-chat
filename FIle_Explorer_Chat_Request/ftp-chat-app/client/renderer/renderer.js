@@ -538,7 +538,7 @@ async function toggleDirectory(treeItem, item, fullPath, expandIconEl) {
             // Load directory contents lazily
             try {
                 showLoading('Loading directory contents...');
-                const result = await window.electronAPI.invoke('ftp:load-directory', fullPath);
+                const result = await electronAPI.ftp.loadDirectory(fullPath);
                 hideLoading();
                 
                 if (result.success) {
@@ -585,11 +585,44 @@ async function toggleDirectory(treeItem, item, fullPath, expandIconEl) {
     }
 }
 
-function selectFTPPath(path, item) {
+async function selectFTPPath(path, item) {
     appState.selectedFtpPath = path;
     
     // Update breadcrumb
     elements.ftpBreadcrumb.textContent = path;
+    
+    // If directory hasn't been loaded yet, load it first
+    if (item.type === 'directory' && !item.loaded) {
+        try {
+            showLoading('Loading directory contents...');
+            const result = await electronAPI.ftp.loadDirectory(path);
+            hideLoading();
+            
+            if (result.success) {
+                // Update item with loaded contents
+                item.files = result.contents.files || [];
+                item.directories = result.contents.directories || [];
+                item.loaded = true;
+                item.isAccessible = result.contents.isAccessible;
+            } else {
+                hideLoading();
+                if (result.error && (result.error.includes('Access denied') || result.error.includes('550'))) {
+                    showNotification(`🔒 Directory "${item.name || path}" is restricted and cannot be accessed.`, 'warning');
+                } else {
+                    showNotification(`Failed to load directory: ${result.error}`, 'error');
+                }
+                return;
+            }
+        } catch (error) {
+            hideLoading();
+            if (error.message && (error.message.includes('Access denied') || error.message.includes('550'))) {
+                showNotification(`🔒 Directory "${item.name || path}" is restricted and cannot be accessed.`, 'warning');
+            } else {
+                showNotification(`Error loading directory: ${error.message}`, 'error');
+            }
+            return;
+        }
+    }
     
     // Render files in the main area
     renderFTPFiles(item.files || [], path);
