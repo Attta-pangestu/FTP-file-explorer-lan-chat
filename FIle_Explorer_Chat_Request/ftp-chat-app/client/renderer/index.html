@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline';">
+    <title>FTP File Explorer & Chat</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Configuration Modal -->
+    <div id="configModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Pengaturan Aplikasi</h2>
+                <p>Konfigurasi koneksi FTP dan Chat server untuk memulai</p>
+            </div>
+            <div class="modal-body">
+                <form id="configForm">
+                    <!-- FTP Configuration Section -->
+                    <div class="config-section">
+                        <h3>🗂️ Konfigurasi FTP</h3>
+                        <div class="input-group">
+                            <label for="ftpHost">Host Server FTP:</label>
+                            <input type="text" id="ftpHost" name="ftpHost" placeholder="contoh: ftp.example.com" required>
+                            <small class="error-text" id="ftpHostError"></small>
+                        </div>
+                        
+                        <div class="input-row">
+                            <div class="input-group">
+                                <label for="ftpPort">Port:</label>
+                                <input type="number" id="ftpPort" name="ftpPort" value="21" min="1" max="65535" required>
+                                <small class="error-text" id="ftpPortError"></small>
+                            </div>
+                            
+                            <div class="input-group">
+                                <label for="ftpSecure">
+                                    <input type="checkbox" id="ftpSecure" name="ftpSecure">
+                                    Koneksi Aman (FTPS)
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div class="input-group">
+                            <label for="ftpUsername">Username FTP:</label>
+                            <input type="text" id="ftpUsername" name="ftpUsername" placeholder="Username FTP" required>
+                            <small class="error-text" id="ftpUsernameError"></small>
+                        </div>
+                        
+                        <div class="input-group">
+                            <label for="ftpPassword">Password FTP:</label>
+                            <input type="password" id="ftpPassword" name="ftpPassword" placeholder="Password FTP" required>
+                            <small class="error-text" id="ftpPasswordError"></small>
+                        </div>
+                        
+                        <button type="button" id="testFtpButton" class="test-button">Test Koneksi FTP</button>
+                        <div id="ftpTestResult" class="test-result"></div>
+                    </div>
+                    
+                    <!-- Chat Configuration Section -->
+                    <div class="config-section">
+                        <h3>💬 Konfigurasi Chat</h3>
+                        <div class="input-group">
+                            <label for="chatServerUrl">URL Server Chat:</label>
+                            <input type="text" id="chatServerUrl" name="chatServerUrl" value="ws://localhost:3000" placeholder="ws://localhost:3000" required>
+                            <small class="error-text" id="chatServerUrlError"></small>
+                        </div>
+                        
+                        <div class="input-group">
+                            <label for="chatUsername">Username Chat:</label>
+                            <input type="text" id="chatUsername" name="chatUsername" placeholder="Username untuk chat" required>
+                            <small class="error-text" id="chatUsernameError"></small>
+                        </div>
+                        
+                        <button type="button" id="testChatButton" class="test-button">Test Koneksi Chat</button>
+                        <div id="chatTestResult" class="test-result"></div>
+                    </div>
+                    
+                    <!-- Form Actions -->
+                    <div class="modal-actions">
+                        <button type="button" id="cancelConfig" class="button-secondary">Batal</button>
+                        <button type="submit" id="saveConfig" class="button-primary">Simpan Konfigurasi</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Application -->
+    <div id="mainApp" class="main-app">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-left">
+                <h1>FTP File Explorer & Chat</h1>
+                <div class="connection-status">
+                    <span id="ftpStatus" class="status-indicator">FTP: Disconnected</span>
+                    <span id="chatStatus" class="status-indicator">Chat: Disconnected</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <button id="settingsButton" class="header-button" title="Pengaturan">
+                    ⚙️
+                </button>
+                <button id="refreshButton" class="header-button" title="Refresh Cache">
+                    🔄
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="app-content">
+            <!-- Navigation Tabs -->
+            <nav class="tab-nav">
+                <button class="tab-button active" data-tab="ftp">
+                    🗂️ File Explorer
+                </button>
+                <button class="tab-button" data-tab="chat">
+                    💬 Chat
+                </button>
+            </nav>
+
+            <!-- Tab Contents -->
+            <div class="tab-contents">
+                <!-- FTP File Explorer Tab -->
+                <div id="ftpTab" class="tab-content active">
+                    <div class="ftp-container">
+                        <div class="ftp-sidebar">
+                            <div class="sidebar-header">
+                                <h3>Direktori FTP</h3>
+                                <button id="refreshFtpButton" class="icon-button" title="Refresh">🔄</button>
+                            </div>
+                            <div class="ftp-tree" id="ftpTree">
+                                <div class="loading-state" id="ftpLoading">
+                                    <div class="spinner"></div>
+                                    <p>Memuat direktori FTP...</p>
+                                </div>
+                                <div class="empty-state" id="ftpEmpty" style="display: none;">
+                                    <p>Tidak ada data FTP. Klik refresh atau periksa konfigurasi.</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="ftp-main">
+                            <div class="breadcrumb" id="ftpBreadcrumb">
+                                <span>Pilih folder dari sidebar</span>
+                            </div>
+                            <div class="file-list" id="ftpFileList">
+                                <div class="welcome-message">
+                                    <h3>Selamat Datang di FTP File Explorer</h3>
+                                    <p>Pilih folder dari sidebar untuk melihat isinya.</p>
+                                    <p>Double-click pada file untuk mendownload dan membukanya.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chat Tab -->
+                <div id="chatTab" class="tab-content">
+                    <div class="chat-container">
+                        <div class="chat-sidebar">
+                            <div class="sidebar-header">
+                                <h3>Pengguna Online</h3>
+                                <span id="userCount" class="user-count">0</span>
+                            </div>
+                            <div class="user-list" id="userList">
+                                <div class="empty-state">
+                                    <p>Belum terhubung ke chat server</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="chat-main">
+                            <div class="chat-header">
+                                <h3>Chat Room</h3>
+                                <div class="chat-status" id="chatConnectionStatus">
+                                    <span class="status-dot offline"></span>
+                                    <span>Offline</span>
+                                </div>
+                            </div>
+                            <div class="chat-messages" id="chatMessages">
+                                <div class="welcome-message">
+                                    <h4>Selamat Datang di Chat Room</h4>
+                                    <p>Hubungkan ke server chat untuk mulai berkomunikasi.</p>
+                                </div>
+                            </div>
+                            <div class="chat-input-container">
+                                <div class="typing-indicator" id="typingIndicator" style="display: none;">
+                                    <span></span> sedang mengetik...
+                                </div>
+                                <div class="chat-input">
+                                    <input type="text" id="messageInput" placeholder="Ketik pesan Anda..." disabled>
+                                    <button id="sendButton" class="send-button" disabled>Kirim</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+        <div class="spinner"></div>
+        <p id="loadingText">Loading...</p>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="notification" class="notification" style="display: none;">
+        <span id="notificationText"></span>
+        <button id="notificationClose">&times;</button>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>
