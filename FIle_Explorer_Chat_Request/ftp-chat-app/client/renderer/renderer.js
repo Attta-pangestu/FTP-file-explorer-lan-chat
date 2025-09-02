@@ -560,9 +560,9 @@ async function toggleDirectory(treeItem, item, fullPath, expandIconEl) {
                 } else {
                     // Check if this is an access denied error
                     if (result.error && (result.error.includes('Access denied') || result.error.includes('550'))) {
-                        showNotification(`🔒 Directory "${item.name || fullPath}" is restricted and cannot be accessed. This directory may require special permissions.`, 'warning');
+                        showNotification(`🔒 Access Restricted: Directory "${item.name || fullPath}" requires special permissions. You can continue browsing other accessible directories.`, 'warning');
                     } else {
-                        showNotification(`Failed to load directory: ${result.error}`, 'error');
+                        showNotification(`⚠️ Directory Load Failed: ${result.error}. Other directories remain accessible.`, 'error');
                     }
                     return;
                 }
@@ -571,9 +571,9 @@ async function toggleDirectory(treeItem, item, fullPath, expandIconEl) {
                 
                 // Check if this is an access denied error
                 if (error.message && (error.message.includes('Access denied') || error.message.includes('550'))) {
-                    showNotification(`🔒 Directory "${item.name || fullPath}" is restricted and cannot be accessed. This directory may require special permissions.`, 'warning');
+                    showNotification(`🔒 Access Restricted: Directory "${item.name || fullPath}" requires special permissions. You can continue browsing other accessible directories.`, 'warning');
                 } else {
-                    showNotification(`Error loading directory: ${error.message}`, 'error');
+                    showNotification(`⚠️ Directory Error: ${error.message}. Other directories remain accessible.`, 'error');
                 }
                 return;
             }
@@ -607,18 +607,18 @@ async function selectFTPPath(path, item) {
             } else {
                 hideLoading();
                 if (result.error && (result.error.includes('Access denied') || result.error.includes('550'))) {
-                    showNotification(`🔒 Directory "${item.name || path}" is restricted and cannot be accessed.`, 'warning');
+                    showNotification(`🔒 Access Restricted: Directory "${item.name || path}" requires special permissions. You can continue browsing other accessible directories.`, 'warning');
                 } else {
-                    showNotification(`Failed to load directory: ${result.error}`, 'error');
+                    showNotification(`⚠️ Directory Load Failed: ${result.error}. Other directories remain accessible.`, 'error');
                 }
                 return;
             }
         } catch (error) {
             hideLoading();
             if (error.message && (error.message.includes('Access denied') || error.message.includes('550'))) {
-                showNotification(`🔒 Directory "${item.name || path}" is restricted and cannot be accessed.`, 'warning');
+                showNotification(`🔒 Access Restricted: Directory "${item.name || path}" requires special permissions. You can continue browsing other accessible directories.`, 'warning');
             } else {
-                showNotification(`Error loading directory: ${error.message}`, 'error');
+                showNotification(`⚠️ Directory Error: ${error.message}. Other directories remain accessible.`, 'error');
             }
             return;
         }
