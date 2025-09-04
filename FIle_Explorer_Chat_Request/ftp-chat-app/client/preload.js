@@ -17,8 +17,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     list: (path) => ipcRenderer.invoke('ftp:list', path),
     loadDirectory: (dirPath) => ipcRenderer.invoke('ftp:load-directory', dirPath),
     downloadAndOpen: (remotePath, fileName) => ipcRenderer.invoke('ftp:download-and-open', remotePath, fileName),
-    getCache: () => ipcRenderer.invoke('ftp:get-cache'),
-    refreshCache: () => ipcRenderer.invoke('ftp:refresh-cache'),
+    getCache: (forceRefresh = false) => ipcRenderer.invoke('ftp:get-cache', forceRefresh),
+    refreshCache: (forceRefresh = true) => ipcRenderer.invoke('ftp:refresh-cache', forceRefresh),
+    clearCache: () => ipcRenderer.invoke('ftp:clear-cache'),
+    getCachedUsers: () => ipcRenderer.invoke('ftp:get-cached-users'),
+    initUsername: () => ipcRenderer.invoke('ftp:init-username'),
     disconnect: () => ipcRenderer.invoke('ftp:disconnect')
   },
 

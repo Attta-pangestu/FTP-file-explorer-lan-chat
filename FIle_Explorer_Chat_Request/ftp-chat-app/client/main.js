@@ -182,9 +182,9 @@ ipcMain.handle('ftp:download-and-open', async (event, remotePath, fileName) => {
   }
 });
 
-ipcMain.handle('ftp:get-cache', async () => {
+ipcMain.handle('ftp:get-cache', async (event, forceRefresh = false) => {
   try {
-    const structure = await ftpClient.getCachedStructure();
+    const structure = await ftpClient.getCachedStructure(null, forceRefresh);
     return { success: true, cache: { structure } };
   } catch (error) {
     console.error('Error getting FTP cache:', error);
@@ -202,12 +202,45 @@ ipcMain.handle('ftp:load-directory', async (event, dirPath) => {
   }
 });
 
-ipcMain.handle('ftp:refresh-cache', async () => {
+ipcMain.handle('ftp:refresh-cache', async (event, forceRefresh = true) => {
   try {
-    await ftpClient.refreshCache();
-    return { success: true };
+    const structure = await ftpClient.refreshCache(null, forceRefresh);
+    return { success: true, structure };
   } catch (error) {
     console.error('Error refreshing FTP cache:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Clear cache for current user
+ipcMain.handle('ftp:clear-cache', async () => {
+  try {
+    const result = await ftpClient.clearUserCache();
+    return { success: true, message: result.message };
+  } catch (error) {
+    console.error('Error clearing FTP cache:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Get list of cached users
+ipcMain.handle('ftp:get-cached-users', async () => {
+  try {
+    const users = await ftpClient.getCachedUsers();
+    return { success: true, users };
+  } catch (error) {
+    console.error('Error getting cached users:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Initialize username for cache
+ipcMain.handle('ftp:init-username', async () => {
+  try {
+    await ftpClient.initializeUsername();
+    return { success: true };
+  } catch (error) {
+    console.error('Error initializing username:', error);
     return { success: false, error: error.message };
   }
 });

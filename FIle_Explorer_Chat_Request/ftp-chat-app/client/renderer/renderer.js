@@ -344,22 +344,25 @@ async function initializeConnections() {
 async function initializeFTP() {
     try {
         console.log('Initializing FTP...');
-        // Try to get cached structure first
-        const cacheResult = await electronAPI.ftp.getCache();
+        
+        // Initialize username for cache system
+        await electronAPI.ftp.initUsername();
+        
+        // Try to get cached structure first (without force refresh)
+        const cacheResult = await electronAPI.ftp.getCache(false);
         
         console.log('Cache result:', cacheResult);
         
-        if (cacheResult.success && cacheResult.cache) {
-            console.log('Cache structure:', cacheResult.cache.structure);
-            console.log('About to call renderFTPTree with structure:', JSON.stringify(cacheResult.cache.structure, null, 2));
+        if (cacheResult.success && cacheResult.cache && cacheResult.cache.structure) {
+            console.log('Cache structure loaded for user:', cacheResult.cache.username);
             appState.ftpStructure = cacheResult.cache.structure;
             renderFTPTree(appState.ftpStructure);
             updateFTPStatus(true);
-            console.log('FTP cache loaded successfully');
+            console.log('FTP cache loaded successfully from persistent storage');
         } else {
-            console.log('No cache found, refreshing...');
-            // No cache, try to refresh
-            await refreshFTPCache();
+            console.log('No valid cache found, refreshing...');
+            // No cache or invalid cache, refresh with force
+            await refreshFTPCache(true);
         }
         
     } catch (error) {
@@ -397,21 +400,23 @@ async function initializeChat() {
 }
 
 // FTP functions
-async function refreshFTPCache() {
+async function refreshFTPCache(forceRefresh = true) {
     showLoading('Memuat ulang cache FTP...');
     
     try {
-        const result = await electronAPI.ftp.refreshCache();
+        // Force refresh the cache
+        const result = await electronAPI.ftp.refreshCache(forceRefresh);
         
         if (result.success) {
-            // Get the updated cache
-            const cacheResult = await electronAPI.ftp.getCache();
+            // Get the updated cache with force refresh
+            const cacheResult = await electronAPI.ftp.getCache(forceRefresh);
             
             if (cacheResult.success) {
                 appState.ftpStructure = cacheResult.cache.structure;
                 renderFTPTree(appState.ftpStructure);
                 updateFTPStatus(true);
                 showNotification('Cache FTP berhasil dimuat ulang!', 'success');
+                console.log('FTP cache refreshed successfully for user:', cacheResult.cache.username);
             }
         } else {
             throw new Error(result.error || 'Failed to refresh FTP cache');

@@ -7,27 +7,31 @@ const config = require('./config');
 // FTP client instance
 let ftpClient = null;
 let isConnected = false;
+let currentUsername = null;
 
 // Cache settings
-const CACHE_TTL_HOURS = 1; // Cache valid for 1 hour
-const CACHE_FILE_PREFIX = 'cache_';
+const CACHE_TTL_HOURS = 48; // Cache valid for 48 hours (optimized for better persistence)
+const CACHE_FILE_PREFIX = 'ftp_cache_';
+const CACHE_VERSION = 3; // Increment when cache structure changes
 
-// Get cache directory path
+// Get cache directory path - using custom Caching folder for better performance
 function getCacheDir() {
-  const userDataPath = app.getPath('userData');
-  return path.join(userDataPath, 'cache');
+  // Use the specific Caching folder requested by user
+  const projectRoot = path.dirname(path.dirname(__dirname));
+  return path.join(projectRoot, 'client', 'Caching');
 }
 
-// Generate cache filename based on current date
-function getCacheFilename() {
-  const now = new Date();
-  const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
-  return `${CACHE_FILE_PREFIX}${dateStr}.json`;
+// Generate cache filename based on username
+function getCacheFilename(username = null) {
+  const user = username || currentUsername || 'default';
+  // Sanitize username for filename
+  const sanitizedUser = user.replace(/[^a-zA-Z0-9_-]/g, '_');
+  return `${CACHE_FILE_PREFIX}${sanitizedUser}.json`;
 }
 
 // Get full cache file path
-function getCacheFilePath() {
-  return path.join(getCacheDir(), getCacheFilename());
+function getCacheFilePath(username = null) {
+  return path.join(getCacheDir(), getCacheFilename(username));
 }
 
 // Ensure cache directory exists
@@ -40,22 +44,39 @@ async function ensureCacheDir() {
   }
 }
 
-// Clean old cache files (older than 7 days)
+// Initialize current username from config
+async function initializeUsername() {
+  try {
+    const appConfig = await config.getConfig();
+    currentUsername = appConfig.ftp?.username || 'default';
+    console.log(`Cache initialized for user: ${currentUsername}`);
+  } catch (error) {
+    console.error('Error initializing username:', error);
+    currentUsername = 'default';
+  }
+}
+
+// Clean old cache files (older than 30 days)
 async function cleanOldCacheFiles() {
   try {
     const cacheDir = getCacheDir();
     const files = await fs.readdir(cacheDir);
     const now = Date.now();
-    const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
+    const maxAge = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
     
     for (const file of files) {
       if (file.startsWith(CACHE_FILE_PREFIX)) {
         const filePath = path.join(cacheDir, file);
-        const stats = await fs.stat(filePath);
-        
-        if (now - stats.mtime.getTime() > maxAge) {
-          await fs.unlink(filePath);
-          console.log(`Deleted old cache file: ${file}`);
+        try {
+          const stats = await fs.stat(filePath);
+          
+          if (now - stats.mtime.getTime() > maxAge) {
+            await fs.unlink(filePath);
+            console.log(`Deleted old cache file: ${file}`);
+          }
+        } catch (statError) {
+          // File might have been deleted already, ignore
+          console.warn(`Could not stat cache file ${file}:`, statError.message);
         }
       }
     }
@@ -64,17 +85,29 @@ async function cleanOldCacheFiles() {
   }
 }
 
-// Check if cache is valid (within TTL)
+// Check if cache is valid (within TTL and correct version)
 function isCacheValid(cacheData) {
   if (!cacheData || !cacheData.timestamp) {
     return false;
   }
   
+  // Check cache version compatibility
+  if (!cacheData.version || cacheData.version < CACHE_VERSION) {
+    console.log('Cache version outdated, invalidating cache');
+    return false;
+  }
+  
+  // Check if cache is within TTL
   const now = Date.now();
   const cacheTime = new Date(cacheData.timestamp).getTime();
   const ttlMs = CACHE_TTL_HOURS * 60 * 60 * 1000;
   
-  return (now - cacheTime) < ttlMs;
+  const isValid = (now - cacheTime) < ttlMs;
+  if (!isValid) {
+    console.log('Cache expired, invalidating cache');
+  }
+  
+  return isValid;
 }
 
 // Normalize file information for consistency
@@ -105,6 +138,9 @@ async function connect() {
     if (!ftpConfig.host || !ftpConfig.username || !ftpConfig.password) {
       throw new Error('FTP configuration is incomplete');
     }
+    
+    // Initialize username for cache
+    await initializeUsername();
     
     // Create new FTP client
     ftpClient = new Client();
@@ -283,25 +319,25 @@ async function download(remotePath, localPath) {
 }
 
 // Read cache from file
-async function readCache() {
+async function readCache(username = null) {
   try {
     await ensureCacheDir();
-    const cacheFilePath = getCacheFilePath();
+    const cacheFilePath = getCacheFilePath(username);
     
     try {
       const cacheData = await fs.readFile(cacheFilePath, 'utf8');
       const parsed = JSON.parse(cacheData);
       
       if (isCacheValid(parsed)) {
-        console.log('Using valid cache data');
+        console.log(`Using valid cache data for user: ${username || currentUsername || 'default'}`);
         return parsed;
       } else {
-        console.log('Cache data is expired');
+        console.log(`Cache data is expired for user: ${username || currentUsername || 'default'}`);
         return null;
       }
     } catch (error) {
       if (error.code === 'ENOENT') {
-        console.log('Cache file not found');
+        console.log(`Cache file not found for user: ${username || currentUsername || 'default'}`);
         return null;
       }
       throw error;
@@ -313,19 +349,23 @@ async function readCache() {
 }
 
 // Write cache to file
-async function writeCache(directoryStructure) {
+async function writeCache(directoryStructure, username = null) {
   try {
     await ensureCacheDir();
-    const cacheFilePath = getCacheFilePath();
+    const cacheFilePath = getCacheFilePath(username);
+    const user = username || currentUsername || 'default';
     
     const cacheData = {
       timestamp: new Date().toISOString(),
       structure: directoryStructure,
-      version: 1
+      version: CACHE_VERSION,
+      username: user,
+      cacheId: `${user}_${Date.now()}` // Unique cache identifier
     };
     
-    await fs.writeFile(cacheFilePath, JSON.stringify(cacheData, null, 2), 'utf8');
-    console.log('Cache updated successfully');
+    // Write cache without indentation for smaller file size and faster I/O
+    await fs.writeFile(cacheFilePath, JSON.stringify(cacheData), 'utf8');
+    console.log(`Cache updated successfully for user: ${user}`);
     
     // Clean old cache files
     await cleanOldCacheFiles();
@@ -337,8 +377,8 @@ async function writeCache(directoryStructure) {
   }
 }
 
-// Build directory structure with lazy loading (only first level)
-async function buildDirectoryStructure(basePath = '/', maxDepth = 3, currentDepth = 0) {
+// Build directory structure with optimized lazy loading for faster performance
+async function buildDirectoryStructure(basePath = '/', maxDepth = 2, currentDepth = 0) {
   const structure = {
     name: basePath === '/' ? 'Root' : basePath.split('/').pop(),
     type: 'directory',
@@ -404,7 +444,7 @@ async function buildDirectoryStructure(basePath = '/', maxDepth = 3, currentDept
 }
 
 // Load directory contents on demand (lazy loading)
-async function loadDirectoryContents(dirPath, maxDepth = 3) {
+async function loadDirectoryContents(dirPath, maxDepth = 1) {
   try {
     console.log(`Loading directory contents for: ${dirPath}`);
     
@@ -472,17 +512,23 @@ async function loadDirectoryContents(dirPath, maxDepth = 3) {
 }
 
 // Refresh cache by rebuilding directory structure
-async function refreshCache() {
+async function refreshCache(username = null, forceRefresh = false) {
   try {
-    console.log('Refreshing FTP cache...');
+    const user = username || currentUsername || 'default';
+    console.log(`Refreshing FTP cache for user: ${user}${forceRefresh ? ' (forced)' : ''}...`);
     
-    // Build fresh directory structure (first level only to avoid timeout)
+    // Check if we need to initialize username
+    if (!currentUsername) {
+      await initializeUsername();
+    }
+    
+    // Build fresh directory structure (optimized depth for faster loading)
     const structure = await buildDirectoryStructure('/', 1, 0);
     
     // Write to cache
-    await writeCache(structure);
+    await writeCache(structure, username);
     
-    console.log('Cache refreshed successfully');
+    console.log(`Cache refreshed successfully for user: ${user}`);
     return structure;
     
   } catch (error) {
@@ -492,21 +538,36 @@ async function refreshCache() {
 }
 
 // Get cached directory structure or build it if not available
-async function getCachedStructure() {
+async function getCachedStructure(username = null, forceRefresh = false) {
   try {
-    // Try to read from cache first
-    let cache = await readCache();
+    const user = username || currentUsername || 'default';
     
-    if (!cache) {
-      console.log('No valid cache found, building directory structure...');
-      await refreshCache();
-      cache = await readCache();
+    // Check if we need to initialize username
+    if (!currentUsername) {
+      await initializeUsername();
     }
     
-    return cache ? cache.structure : null;
+    // If force refresh is requested, skip cache read
+    if (forceRefresh) {
+      console.log(`Force refresh requested for user: ${user}`);
+      return await refreshCache(username, true);
+    }
+    
+    // Try to read from cache first
+    const cachedData = await readCache(username);
+    
+    if (cachedData && cachedData.structure) {
+      console.log(`Using cached directory structure for user: ${user}`);
+      return cachedData.structure;
+    }
+    
+    // If no valid cache, refresh it
+    console.log(`No valid cache found for user: ${user}, refreshing...`);
+    return await refreshCache(username);
+    
   } catch (error) {
     console.error('Error getting cached structure:', error);
-    throw error;
+    throw new Error(`Failed to get directory structure: ${error.message}`);
   }
 }
 
@@ -518,18 +579,82 @@ function getConnectionStatus() {
   };
 }
 
+// Clear cache for specific user
+async function clearUserCache(username = null) {
+  try {
+    const user = username || currentUsername || 'default';
+    const cacheFilePath = getCacheFilePath(username);
+    
+    try {
+      await fs.unlink(cacheFilePath);
+      console.log(`Cache cleared for user: ${user}`);
+      return { success: true, message: `Cache cleared for user: ${user}` };
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        console.log(`No cache file found for user: ${user}`);
+        return { success: true, message: `No cache to clear for user: ${user}` };
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error clearing user cache:', error);
+    throw new Error(`Failed to clear cache for user: ${error.message}`);
+  }
+}
+
+// Get list of all cached users
+async function getCachedUsers() {
+  try {
+    await ensureCacheDir();
+    const cacheDir = getCacheDir();
+    const files = await fs.readdir(cacheDir);
+    
+    const users = [];
+    for (const file of files) {
+      if (file.startsWith(CACHE_FILE_PREFIX) && file.endsWith('.json')) {
+        const username = file.replace(CACHE_FILE_PREFIX, '').replace('.json', '');
+        const filePath = path.join(cacheDir, file);
+        
+        try {
+          const stats = await fs.stat(filePath);
+          const cacheData = JSON.parse(await fs.readFile(filePath, 'utf8'));
+          
+          users.push({
+            username: username,
+            lastModified: stats.mtime,
+            cacheValid: isCacheValid(cacheData),
+            cacheVersion: cacheData.version || 1,
+            cacheId: cacheData.cacheId || 'unknown'
+          });
+        } catch (error) {
+          console.warn(`Error reading cache file ${file}:`, error.message);
+        }
+      }
+    }
+    
+    return users;
+  } catch (error) {
+    console.error('Error getting cached users:', error);
+    return [];
+  }
+}
+
+// Export functions
 module.exports = {
   connect,
   disconnect,
   list,
   download,
-  readCache,
-  refreshCache,
   getCachedStructure,
+  refreshCache,
   getConnectionStatus,
+  clearUserCache,
+  getCachedUsers,
+  initializeUsername,
   loadDirectoryContents,
   
   // For testing and debugging
-  getCacheFilePath,
-  buildDirectoryStructure
+  buildDirectoryStructure,
+  readCache,
+  writeCache
 };
