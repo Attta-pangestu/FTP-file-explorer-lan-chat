@@ -1,6 +1,6 @@
-# FTP File Explorer & Chat Desktop App
+# FTP File Explorer Desktop App
 
-Aplikasi desktop menggunakan Electron.js yang menggabungkan File Explorer berbasis FTP dan fitur Chat real-time seperti WhatsApp Desktop.
+Aplikasi desktop menggunakan Electron.js untuk File Explorer berbasis FTP dengan antarmuka yang intuitif dan modern.
 
 ## Features
 
@@ -11,12 +11,11 @@ Aplikasi desktop menggunakan Electron.js yang menggabungkan File Explorer berbas
 - Double-click file untuk download dan buka dengan aplikasi default
 - UI tree view seperti Windows File Explorer
 
-### 💬 Real-time Chat
-- Setup server chat terpisah
-- UI mirip WhatsApp Desktop
-- Login dengan username
-- Chat real-time menggunakan WebSocket
-- Daftar pengguna aktif
+### 📁 Advanced File Management
+- Comprehensive CRUD operations
+- Drag-and-drop file upload
+- Batch file operations
+- Progress tracking for all operations
 
 ## Project Structure
 
@@ -33,10 +32,7 @@ ftp-chat-app/
 │   └── utils/             # Utility modules
 │       ├── config.js      # Configuration management
 │       ├── ftp-client.js  # FTP operations
-│       └── chat-client.js # Chat functionality
-├── server/                # Chat server
-│   ├── server.js         # Socket.io server
-│   └── package.json
+
 └── README.md
 ```
 
@@ -46,14 +42,7 @@ ftp-chat-app/
 - Node.js >= 14.x
 - npm >= 6.x
 
-### 1. Install Chat Server
-```bash
-cd server
-npm install
-npm start
-```
-
-### 2. Install Electron Client
+### 1. Install Client
 ```bash
 cd client
 npm install
@@ -71,17 +60,14 @@ Saat pertama kali menjalankan aplikasi, Anda akan diminta untuk setup:
 - **Username**: Username FTP
 - **Password**: Password FTP (akan dienkripsi)
 
-### Chat Configuration  
-- **Chat Server URL**: ws://localhost:3000 (default)
-- **Chat Username**: Username untuk chat (berbeda dari FTP)
+
 
 ## Usage
 
-1. **Jalankan Chat Server**: `cd server && npm start`
-2. **Jalankan Client**: `cd client && npm start`
-3. **Setup konfigurasi** FTP dan Chat pada first run
-4. **Browse FTP files** di tab File Explorer
-5. **Chat real-time** di tab Chat
+1. **Jalankan Client**: `cd client && npm start`
+2. **Setup konfigurasi** FTP pada first run
+3. **Browse files** dan kelola file FTP dengan mudah
+4. **Upload, download, edit, dan delete** file secara langsung
 
 ## Tech Stack
 
@@ -110,15 +96,12 @@ Saat pertama kali menjalankan aplikasi, Anda akan diminta untuk setup:
 - Cek firewall dan network connectivity
 - Verifikasi username/password
 
-### Chat Connection Issues  
-- Pastikan chat server berjalan di port 3000
-- Cek URL server chat di konfigurasi
-- Username harus unique per session
+
 
 ## Future Enhancements
-- [ ] Private 1-on-1 chat
-- [ ] File upload via FTP
-- [ ] Database untuk chat history
+- [ ] Advanced file search and filtering
+- [ ] File versioning and backup
+- [ ] Multi-server FTP management
 - [ ] End-to-end encryption
 - [ ] Multi-language support
 
