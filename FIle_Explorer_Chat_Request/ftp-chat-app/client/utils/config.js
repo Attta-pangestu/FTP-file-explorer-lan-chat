@@ -3,7 +3,6 @@ const path = require('path');
 const crypto = require('crypto');
 const { app } = require('electron');
 const { Client } = require('basic-ftp');
-const { io } = require('socket.io-client');
 
 // Encryption settings
 const ENCRYPTION_ALGORITHM = 'aes-256-cbc';
@@ -19,7 +18,7 @@ function getEncryptionKey() {
   
   // Generate a key based on app name and version (consistent across runs)
   const appData = `${app.getName()}-${app.getVersion()}-encryption-salt`;
-  return crypto.pbkdf2Sync(appData, 'ftp-chat-salt', 10000, ENCRYPTION_KEY_LENGTH, 'sha512');
+  return crypto.pbkdf2Sync(appData, 'ftp-app-salt', 10000, ENCRYPTION_KEY_LENGTH, 'sha512');
 }
 
 // Encrypt sensitive data
@@ -86,10 +85,6 @@ function getDefaultConfig() {
       password: '', // Will be encrypted
       secure: false
     },
-    chat: {
-      serverUrl: 'ws://localhost:3000',
-      username: ''
-    },
     app: {
       theme: 'light',
       autoConnect: false,
@@ -135,7 +130,6 @@ async function getConfig() {
       ...defaultConfig,
       ...config,
       ftp: { ...defaultConfig.ftp, ...config.ftp },
-      chat: { ...defaultConfig.chat, ...config.chat },
       app: { ...defaultConfig.app, ...config.app }
     };
     
@@ -158,7 +152,6 @@ async function saveConfig(newConfig) {
       ...currentConfig,
       ...newConfig,
       ftp: { ...currentConfig.ftp, ...(newConfig.ftp || {}) },
-      chat: { ...currentConfig.chat, ...(newConfig.chat || {}) },
       app: { ...currentConfig.app, ...(newConfig.app || {}) },
       updatedAt: new Date().toISOString()
     };
@@ -243,58 +236,6 @@ async function validateFTP(ftpConfig) {
   });
 }
 
-// Validate Chat configuration by attempting connection
-async function validateChat(chatConfig) {
-  return new Promise((resolve, reject) => {
-    let socket;
-    const timeout = setTimeout(() => {
-      if (socket) {
-        socket.disconnect();
-      }
-      reject(new Error('Chat server connection timeout'));
-    }, 5000); // 5 second timeout
-    
-    try {
-      socket = io(chatConfig.serverUrl, {
-        transports: ['websocket'],
-        timeout: 5000,
-        autoConnect: false
-      });
-      
-      socket.on('connect', () => {
-        clearTimeout(timeout);
-        socket.disconnect();
-        resolve({
-          success: true,
-          message: 'Chat server connection successful'
-        });
-      });
-      
-      socket.on('connect_error', (error) => {
-        clearTimeout(timeout);
-        socket.disconnect();
-        reject(new Error(`Chat server connection failed: ${error.message}`));
-      });
-      
-      socket.on('error', (error) => {
-        clearTimeout(timeout);
-        socket.disconnect();
-        reject(new Error(`Chat server error: ${error.message || 'Unknown error'}`));
-      });
-      
-      // Attempt connection
-      socket.connect();
-      
-    } catch (error) {
-      clearTimeout(timeout);
-      if (socket) {
-        socket.disconnect();
-      }
-      reject(new Error(`Chat validation failed: ${error.message}`));
-    }
-  });
-}
-
 // Check if configuration is complete and valid
 async function isConfigurationValid() {
   try {
@@ -305,11 +246,7 @@ async function isConfigurationValid() {
                     config.ftp.username && 
                     config.ftp.password;
     
-    // Check Chat configuration
-    const chatValid = config.chat.serverUrl && 
-                     config.chat.username;
-    
-    return ftpValid && chatValid;
+    return ftpValid;
     
   } catch (error) {
     console.error('Error checking configuration validity:', error);
@@ -321,7 +258,6 @@ module.exports = {
   getConfig,
   saveConfig,
   validateFTP,
-  validateChat,
   isConfigurationValid,
   getConfigPath
 };

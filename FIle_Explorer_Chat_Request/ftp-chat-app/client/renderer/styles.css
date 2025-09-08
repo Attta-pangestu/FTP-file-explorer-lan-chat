@@ -150,6 +150,61 @@ body {
     cursor: not-allowed;
 }
 
+.config-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+}
+
+.import-button {
+    background: #007AFF;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.import-button:hover {
+    background: #0056CC;
+}
+
+.import-button:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+}
+
+.export-button {
+    background: #FF9500;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.export-button:hover {
+    background: #E6850E;
+}
+
+.export-button:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+}
+
 .test-result {
     margin-top: 12px;
     padding: 12px;
@@ -215,6 +270,30 @@ body {
 .button-secondary:hover {
     border-color: #007AFF;
     color: #007AFF;
+}
+
+.button-connect {
+    background: #34C759;
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    box-shadow: 0 2px 8px rgba(52, 199, 89, 0.3);
+}
+
+.button-connect:hover {
+    background: #30B454;
+    box-shadow: 0 4px 12px rgba(52, 199, 89, 0.4);
+}
+
+.button-connect:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+    box-shadow: none;
 }
 
 /* Main App Styles */
@@ -526,262 +605,7 @@ body {
     color: #666;
 }
 
-/* Chat Styles */
-.chat-container {
-    display: flex;
-    height: 100%;
-}
 
-.chat-sidebar {
-    width: 250px;
-    background: white;
-    border-right: 1px solid #e5e5e5;
-    display: flex;
-    flex-direction: column;
-}
-
-.user-count {
-    background: #007AFF;
-    color: white;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 12px;
-    font-weight: 600;
-}
-
-.user-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px;
-}
-
-.user-item {
-    display: flex;
-    align-items: center;
-    padding: 8px 12px;
-    border-radius: 8px;
-    margin-bottom: 4px;
-    gap: 10px;
-}
-
-.user-item.online {
-    background: #f5f5f5;
-}
-
-.user-avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    background: #007AFF;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-weight: 600;
-    font-size: 14px;
-}
-
-.user-info {
-    flex: 1;
-}
-
-.user-name {
-    font-weight: 500;
-    font-size: 14px;
-}
-
-.user-status {
-    font-size: 12px;
-    color: #666;
-}
-
-.chat-main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-}
-
-.chat-header {
-    padding: 16px 24px;
-    background: white;
-    border-bottom: 1px solid #e5e5e5;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.chat-header h3 {
-    font-size: 16px;
-    font-weight: 600;
-    color: #1a1a1a;
-}
-
-.chat-status {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 14px;
-    color: #666;
-}
-
-.status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #ccc;
-}
-
-.status-dot.online {
-    background: #34C759;
-}
-
-.status-dot.offline {
-    background: #ff3b30;
-}
-
-.chat-messages {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px 24px;
-    background: #f9f9f9;
-}
-
-.message {
-    display: flex;
-    margin-bottom: 16px;
-    gap: 12px;
-}
-
-.message.own {
-    flex-direction: row-reverse;
-}
-
-.message-avatar {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    background: #666;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-weight: 600;
-    font-size: 14px;
-    flex-shrink: 0;
-}
-
-.message.own .message-avatar {
-    background: #007AFF;
-}
-
-.message.system .message-avatar {
-    background: #ff9500;
-}
-
-.message-content {
-    max-width: 70%;
-}
-
-.message-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 4px;
-}
-
-.message.own .message-header {
-    flex-direction: row-reverse;
-}
-
-.message-author {
-    font-weight: 600;
-    font-size: 14px;
-    color: #333;
-}
-
-.message-time {
-    font-size: 12px;
-    color: #666;
-}
-
-.message-text {
-    background: white;
-    padding: 12px 16px;
-    border-radius: 16px;
-    font-size: 14px;
-    line-height: 1.4;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-}
-
-.message.own .message-text {
-    background: #007AFF;
-    color: white;
-}
-
-.message.system .message-text {
-    background: #f0f0f0;
-    color: #666;
-    font-style: italic;
-}
-
-.chat-input-container {
-    background: white;
-    border-top: 1px solid #e5e5e5;
-    padding: 16px 24px;
-}
-
-.typing-indicator {
-    font-size: 12px;
-    color: #666;
-    margin-bottom: 8px;
-    font-style: italic;
-}
-
-.chat-input {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-}
-
-.chat-input input {
-    flex: 1;
-    padding: 12px 16px;
-    border: 2px solid #e5e5e5;
-    border-radius: 24px;
-    font-size: 14px;
-    outline: none;
-    transition: border-color 0.2s ease;
-}
-
-.chat-input input:focus {
-    border-color: #007AFF;
-}
-
-.chat-input input:disabled {
-    background: #f5f5f5;
-    color: #666;
-}
-
-.send-button {
-    background: #007AFF;
-    color: white;
-    border: none;
-    padding: 12px 20px;
-    border-radius: 20px;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background-color 0.2s ease;
-}
-
-.send-button:hover:not(:disabled) {
-    background: #0051D5;
-}
-
-.send-button:disabled {
-    background: #ccc;
-    cursor: not-allowed;
-}
 
 /* Loading and Empty States */
 .loading-state,
@@ -897,12 +721,10 @@ body {
         gap: 0;
     }
     
-    .ftp-sidebar,
-    .chat-sidebar {
+    .ftp-sidebar {
         width: 250px;
     }
     
-    .chat-container,
     .ftp-container {
         flex-direction: column;
     }
@@ -928,4 +750,732 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
     background: #a8a8a8;
+}
+
+/* Upload Section Styles */
+.upload-section {
+    background: white;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    border: 1px solid #e5e5e5;
+}
+
+.upload-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+.upload-info {
+    color: #666;
+    font-size: 14px;
+    margin-left: auto;
+}
+
+/* Drag and Drop Zone */
+.drag-drop-zone {
+    border: 2px dashed #d1d5db;
+    border-radius: 8px;
+    padding: 40px 20px;
+    text-align: center;
+    background: #f9fafb;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    margin-bottom: 16px;
+}
+
+.drag-drop-zone:hover {
+    border-color: #3b82f6;
+    background: #eff6ff;
+}
+
+.drag-drop-zone.drag-over {
+    border-color: #3b82f6;
+    background: #dbeafe;
+    transform: scale(1.02);
+}
+
+.drag-drop-content {
+    pointer-events: none;
+}
+
+.drag-drop-icon {
+    font-size: 48px;
+    margin-bottom: 12px;
+    opacity: 0.6;
+}
+
+.drag-drop-text {
+    font-size: 16px;
+    font-weight: 500;
+    color: #374151;
+    margin-bottom: 4px;
+}
+
+.drag-drop-subtext {
+    font-size: 14px;
+    color: #6b7280;
+}
+
+/* Selected Files List */
+.selected-files {
+    background: #f8f9fa;
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.selected-files h4 {
+    color: #374151;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+}
+
+.file-items {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.file-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: white;
+    padding: 12px;
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+}
+
+.file-item-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+}
+
+.file-item-icon {
+    font-size: 16px;
+}
+
+.file-item-details {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.file-item-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: #374151;
+}
+
+.file-item-size {
+    font-size: 12px;
+    color: #6b7280;
+}
+
+.file-item-remove {
+    background: none;
+    border: none;
+    color: #ef4444;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    font-size: 16px;
+    transition: background-color 0.2s;
+}
+
+.file-item-remove:hover {
+    background: #fee2e2;
+}
+
+/* Upload Progress */
+.upload-progress {
+    background: #f8f9fa;
+    border-radius: 6px;
+    padding: 16px;
+}
+
+.progress-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+}
+
+.progress-header h4 {
+    color: #374151;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.progress-items {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.progress-item {
+    background: white;
+    padding: 12px;
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+}
+
+.progress-item-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.progress-item-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: #374151;
+}
+
+.progress-item-status {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-weight: 500;
+}
+
+.progress-item-status.uploading {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+
+.progress-item-status.completed {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.progress-item-status.error {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 6px;
+    background: #e5e7eb;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: #3b82f6;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.progress-bar-fill.completed {
+    background: #10b981;
+}
+
+.progress-bar-fill.error {
+    background: #ef4444;
+}
+
+/* Button Styles for Upload */
+.button-danger {
+    background: #ef4444;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.button-danger:hover {
+    background: #dc2626;
+}
+
+.button-danger:disabled {
+    background: #9ca3af;
+    cursor: not-allowed;
+}
+
+/* Responsive Upload Styles */
+@media (max-width: 768px) {
+    .upload-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .upload-info {
+        margin-left: 0;
+        text-align: center;
+    }
+    
+    .drag-drop-zone {
+        padding: 30px 15px;
+    }
+    
+    .progress-header {
+        flex-direction: column;
+        gap: 8px;
+        align-items: stretch;
+    }
+}
+
+/* Delete Controls Styles */
+.delete-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    margin-bottom: 16px;
+}
+
+.delete-info {
+    font-size: 14px;
+    color: #dc2626;
+    margin-left: auto;
+}
+
+.button-danger {
+    background: #dc2626;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.button-danger:hover:not(:disabled) {
+    background: #b91c1c;
+    transform: translateY(-1px);
+}
+
+.button-danger:disabled {
+    background: #9ca3af;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* File Selection Styles */
+.file-item.selectable {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.file-item.selectable:hover {
+    background: #f9fafb;
+    border-color: #d1d5db;
+}
+
+.file-item.selected {
+    background: #eff6ff;
+    border-color: #3b82f6;
+}
+
+.file-item-checkbox {
+    margin-right: 8px;
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.file-item-checkbox:checked {
+    accent-color: #3b82f6;
+}
+
+/* Delete Progress Styles */
+.delete-progress {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.delete-progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.delete-progress-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #dc2626;
+}
+
+.delete-progress-stats {
+    font-size: 14px;
+    color: #6b7280;
+}
+
+.delete-progress-bar {
+    width: 100%;
+    height: 8px;
+    background: #fee2e2;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
+.delete-progress-fill {
+    height: 100%;
+    background: #dc2626;
+    transition: width 0.3s ease;
+}
+
+.delete-current-item {
+    font-size: 14px;
+    color: #374151;
+    font-style: italic;
+}
+
+/* Responsive Delete Styles */
+@media (max-width: 768px) {
+    .delete-controls {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+    
+    .delete-info {
+        margin-left: 0;
+        text-align: center;
+    }
+    
+    .delete-progress-header {
+        flex-direction: column;
+        gap: 8px;
+        align-items: stretch;
+    }
+}
+
+/* File Editor Modal Styles */
+.editor-modal {
+    max-width: 90vw;
+    max-height: 90vh;
+    width: 1000px;
+}
+
+.editor-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid #e5e5e5;
+    margin-bottom: 16px;
+}
+
+.editor-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.editor-info span {
+    font-size: 12px;
+    color: #666;
+}
+
+.editor-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.editor-container {
+    height: 500px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+#fileContentEditor {
+    width: 100%;
+    height: 100%;
+    border: none;
+    outline: none;
+    padding: 16px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    resize: none;
+    background: #fafafa;
+}
+
+.editor-status {
+    margin-top: 12px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.editor-status.success {
+    background: #d1fae5;
+    color: #065f46;
+    border: 1px solid #a7f3d0;
+}
+
+.editor-status.error {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fca5a5;
+}
+
+.editor-status.loading {
+    background: #dbeafe;
+    color: #1e40af;
+    border: 1px solid #93c5fd;
+}
+
+.close-button {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: none;
+    border: none;
+    font-size: 24px;
+    color: #666;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.close-button:hover {
+    background: #f3f4f6;
+    color: #333;
+}
+
+/* File Replace Modal Styles */
+.file-replace-zone {
+    margin: 20px 0;
+    padding: 20px;
+    border: 2px dashed #ddd;
+    border-radius: 8px;
+    text-align: center;
+    background: #fafafa;
+}
+
+.file-replace-zone:hover {
+    border-color: #007bff;
+    background: #f8f9ff;
+}
+
+#replaceFileInfo {
+    margin-top: 12px;
+    padding: 12px;
+    background: #e8f5e8;
+    border-radius: 6px;
+    text-align: left;
+}
+
+#replaceFileInfo p {
+    margin: 4px 0;
+    font-size: 14px;
+}
+
+.replace-progress {
+    margin-top: 16px;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 8px;
+    background: #e5e5e5;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
+.progress-fill {
+    height: 100%;
+    background: #007bff;
+    transition: width 0.3s ease;
+}
+
+/* Edit Button Styles */
+.file-actions {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.edit-button {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    color: #495057;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.edit-button:hover {
+    background: #e9ecef;
+    border-color: #adb5bd;
+    color: #212529;
+}
+
+.replace-button {
+    background: #fff3cd;
+    border: 1px solid #ffeaa7;
+    color: #856404;
+}
+
+.replace-button:hover {
+    background: #ffeaa7;
+    border-color: #ffdd57;
+    color: #533f03;
+}
+
+/* Responsive Editor Styles */
+@media (max-width: 768px) {
+    .editor-modal {
+        width: 95vw;
+        max-width: 95vw;
+    }
+    
+    .editor-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+    
+    .editor-actions {
+        justify-content: center;
+    }
+    
+    .editor-container {
+        height: 400px;
+    }
+    
+    #fileContentEditor {
+        font-size: 12px;
+        padding: 12px;
+    }
+}
+
+/* Download Progress Modal Styles */
+.download-progress-container {
+    padding: 20px;
+}
+
+.download-progress-container h3 {
+    margin-bottom: 15px;
+    color: #333;
+    font-size: 18px;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 20px;
+    background-color: #e0e0e0;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 10px;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #4CAF50, #45a049);
+    border-radius: 10px;
+    transition: width 0.3s ease;
+    position: relative;
+}
+
+.progress-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+.progress-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    font-size: 14px;
+    color: #666;
+}
+
+.progress-stats {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 15px;
+    font-size: 12px;
+    color: #888;
+}
+
+.progress-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+}
+
+.progress-actions button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.2s;
+}
+
+.progress-actions .btn-cancel {
+    background-color: #f44336;
+    color: white;
+}
+
+.progress-actions .btn-cancel:hover {
+    background-color: #d32f2f;
+}
+
+.progress-actions .btn-secondary {
+    background-color: #e0e0e0;
+    color: #333;
+}
+
+.progress-actions .btn-secondary:hover {
+    background-color: #d0d0d0;
+}
+
+.progress-actions .btn-primary {
+    background-color: #2196F3;
+    color: white;
+}
+
+.progress-actions .btn-primary:hover {
+    background-color: #1976D2;
 }
