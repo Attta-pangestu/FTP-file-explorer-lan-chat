@@ -270,6 +270,8 @@ public class FtpVirtualFileSystem : IDokanOperations, IVirtualDrive
         {
             if (!_openFiles.TryGetValue(fileName, out var stream))
             {
+                _logger.LogDebug("File {FileName} not in cache, downloading from FTP", fileName);
+                
                 // File not in cache, download from FTP with timeout
                 var timeoutTask = Task.Delay(TimeSpan.FromSeconds(15));
                 var ftpTask = Task.Run(async () => await _ftpClient!.DownloadFileAsync(NormalizeFtpPath(fileName)));
@@ -279,13 +281,38 @@ public class FtpVirtualFileSystem : IDokanOperations, IVirtualDrive
                 if (completedTask == 0 && ftpTask.IsCompletedSuccessfully)
                 {
                     var ftpStream = ftpTask.Result;
-                    _openFiles[fileName] = ftpStream;
-                    stream = ftpStream;
+                    _logger.LogDebug("Downloaded stream for {FileName}: Length={Length}, CanSeek={CanSeek}, Position={Position}", 
+                        fileName, ftpStream.Length, ftpStream.CanSeek, ftpStream.Position);
+                    
+                    // Always convert to MemoryStream for better control and seekability
+                    var memoryStream = new MemoryStream();
+                    if (ftpStream.Length > 0)
+                    {
+                        ftpStream.Position = 0;
+                        ftpStream.CopyTo(memoryStream);
+                    }
+                    ftpStream.Dispose();
+                    memoryStream.Position = 0;
+                    
+                    _openFiles[fileName] = memoryStream;
+                    stream = memoryStream;
+                    
+                    // Update file cache with actual size
+                    _fileCache[fileName] = new CachedFileInfo
+                    {
+                        Name = Path.GetFileName(fileName),
+                        Size = stream.Length,
+                        LastModified = DateTime.UtcNow,
+                        IsModified = false
+                    };
+                    
+                    _logger.LogDebug("Cached stream for {FileName}: Length={Length}, Position={Position}", 
+                        fileName, stream.Length, stream.Position);
 
                     _ = Task.Run(async () =>
                     {
                         await _activityLogger.LogActivityAsync(ActivityLog.CreateSuccess(
-                            OperationType.Download, fileName, $"Downloaded for read access", 
+                            OperationType.Download, fileName, $"Downloaded for read access ({stream.Length} bytes)", 
                             _ftpClient.ConnectionInfo?.Username, stream.Length));
                     });
                 }
@@ -295,15 +322,60 @@ public class FtpVirtualFileSystem : IDokanOperations, IVirtualDrive
                     return NtStatus.IoTimeout;
                 }
             }
+            else
+            {
+                _logger.LogDebug("Using cached stream for {FileName}: Length={Length}, Position={Position}", 
+                    fileName, stream.Length, stream.Position);
+            }
 
+            // Validate offset and stream length
+            if (offset < 0 || offset > stream.Length)
+            {
+                _logger.LogWarning("Invalid offset {Offset} for file {FileName} (length: {Length})", offset, fileName, stream.Length);
+                return NtStatus.InvalidParameter;
+            }
+
+            // Handle case where offset is at or beyond end of file
+            if (offset >= stream.Length)
+            {
+                bytesRead = 0;
+                return NtStatus.Success;
+            }
+
+            // Set position and read data
             stream.Position = offset;
-            bytesRead = stream.Read(buffer, 0, buffer.Length);
+            var remainingBytes = (int)Math.Min(buffer.Length, stream.Length - offset);
+            bytesRead = stream.Read(buffer, 0, remainingBytes);
 
+            _logger.LogDebug("Read {BytesRead} bytes from {FileName} at offset {Offset} (stream length: {StreamLength}, buffer length: {BufferLength})", 
+                bytesRead, fileName, offset, stream.Length, buffer.Length);
+            
+            // Log first few bytes for debugging
+            if (bytesRead > 0 && _logger.IsEnabled(LogLevel.Trace))
+            {
+                var preview = string.Join(" ", buffer.Take(Math.Min(bytesRead, 16)).Select(b => b.ToString("X2")));
+                _logger.LogTrace("First bytes of {FileName}: {Preview}", fileName, preview);
+            }
             return NtStatus.Success;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _logger.LogError(ex, "Access denied reading file {FileName} at offset {Offset}", fileName, offset);
+            return NtStatus.AccessDenied;
+        }
+        catch (FileNotFoundException ex)
+        {
+            _logger.LogError(ex, "File not found {FileName}", fileName);
+            return NtStatus.ObjectNameNotFound;
+        }
+        catch (IOException ex)
+        {
+            _logger.LogError(ex, "IO error reading file {FileName} at offset {Offset}", fileName, offset);
+            return NtStatus.Error;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error reading file {FileName} at offset {Offset}", fileName, offset);
+            _logger.LogError(ex, "Unexpected error reading file {FileName} at offset {Offset}", fileName, offset);
             return NtStatus.Error;
         }
     }
@@ -311,49 +383,111 @@ public class FtpVirtualFileSystem : IDokanOperations, IVirtualDrive
     public NtStatus WriteFile(string fileName, byte[] buffer, out int bytesWritten, long offset, IDokanFileInfo info)
     {
         bytesWritten = 0;
+        _logger.LogDebug("WriteFile called for {FileName} at offset {Offset}, buffer size: {BufferSize}", fileName, offset, buffer.Length);
 
         try
         {
             if (!_openFiles.TryGetValue(fileName, out var stream))
             {
-                // Create new stream for writing
-                stream = new MemoryStream();
+                _logger.LogDebug("File {FileName} not in open files cache, attempting to download", fileName);
+                
+                // For write operations on existing files, try to download first to preserve content
+                if (info.Context == null || !info.Context.ToString().Contains("new_file"))
+                {
+                    try
+                    {
+                        var timeoutTask = Task.Delay(TimeSpan.FromSeconds(10));
+                        var ftpTask = Task.Run(async () => await _ftpClient!.DownloadFileAsync(NormalizeFtpPath(fileName)));
+                        
+                        var completedTask = Task.WaitAny(ftpTask, timeoutTask);
+                        
+                        if (completedTask == 0 && ftpTask.IsCompletedSuccessfully)
+                        {
+                            var ftpStream = ftpTask.Result;
+                            
+                            // Always convert to MemoryStream for consistent behavior
+                            var memoryStream = new MemoryStream();
+                            if (ftpStream.Length > 0)
+                            {
+                                ftpStream.Position = 0;
+                                ftpStream.CopyTo(memoryStream);
+                            }
+                            ftpStream.Dispose();
+                            memoryStream.Position = 0;
+                            stream = memoryStream;
+                            _logger.LogDebug("Successfully downloaded {FileName} for writing, size: {Size} bytes", fileName, memoryStream.Length);
+                        }
+                        else
+                        {
+                            // If download fails or times out, create new stream
+                            _logger.LogWarning("Download timeout or failed for {FileName}, creating new stream", fileName);
+                            stream = new MemoryStream();
+                        }
+                    }
+                    catch (Exception downloadEx)
+                    {
+                        // If download fails, create new stream
+                        _logger.LogWarning(downloadEx, "Failed to download {FileName} for writing, creating new stream", fileName);
+                        stream = new MemoryStream();
+                    }
+                }
+                else
+                {
+                    // Create new stream for new files
+                    _logger.LogDebug("Creating new stream for new file {FileName}", fileName);
+                    stream = new MemoryStream();
+                }
+                
                 _openFiles[fileName] = stream;
             }
 
-            if (stream.Length < offset)
+            // Ensure stream can accommodate the write operation
+            var requiredLength = offset + buffer.Length;
+            if (stream.Length < requiredLength)
             {
-                // Extend stream if necessary
-                stream.SetLength(offset);
+                stream.SetLength(requiredLength);
             }
 
+            // Perform the write operation
             stream.Position = offset;
             stream.Write(buffer, 0, buffer.Length);
             bytesWritten = buffer.Length;
 
             // Mark file as modified in cache
-            var cacheKey = $"file_{fileName}";
-            _cache.Set(cacheKey, new CachedFileInfo 
-            { 
+            _fileCache[fileName] = new CachedFileInfo
+            {
                 Name = Path.GetFileName(fileName),
-                LastModified = DateTime.UtcNow, 
-                IsModified = true 
-            }, TimeSpan.FromMinutes(5));
+                Size = stream.Length,
+                LastModified = DateTime.UtcNow,
+                IsModified = true
+            };
 
             // Log write operation (capture bytesWritten value for async logging)
             var writtenBytes = bytesWritten;
             _ = Task.Run(async () =>
             {
                 await _activityLogger.LogActivityAsync(ActivityLog.CreateSuccess(
-                    OperationType.Modify, fileName, $"File data written at offset {offset}", 
+                    OperationType.Modify, fileName, $"Wrote {writtenBytes} bytes at offset {offset} (total size: {stream.Length})", 
                     _ftpClient?.ConnectionInfo?.Username, writtenBytes));
             });
 
+            _logger.LogDebug("Wrote {BytesWritten} bytes to {FileName} at offset {Offset}", bytesWritten, fileName, offset);
+
             return NtStatus.Success;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _logger.LogError(ex, "Access denied writing to file {FileName} at offset {Offset}", fileName, offset);
+            return NtStatus.AccessDenied;
+        }
+        catch (IOException ex)
+        {
+            _logger.LogError(ex, "IO error writing to file {FileName} at offset {Offset}", fileName, offset);
+            return NtStatus.DiskFull;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error writing to file {FileName} at offset {Offset}", fileName, offset);
+            _logger.LogError(ex, "Unexpected error writing to file {FileName} at offset {Offset}", fileName, offset);
             return NtStatus.Error;
         }
     }
@@ -381,10 +515,11 @@ public class FtpVirtualFileSystem : IDokanOperations, IVirtualDrive
                 return NtStatus.Success;
             }
 
-            var cacheKey = $"file_{fileName}";
-            if (_cache.TryGetValue<CachedFileInfo>(cacheKey, out var cached))
+            // Use consistent cache key (same as used in other operations)
+            if (_fileCache.TryGetValue(fileName, out var cached))
             {
                 fileInfo = cached.ToFileInformation();
+                _logger.LogDebug("Retrieved file info from cache for {FileName}: Size={Size}", fileName, cached.Size);
                 return NtStatus.Success;
             }
 
@@ -416,14 +551,18 @@ public class FtpVirtualFileSystem : IDokanOperations, IVirtualDrive
                     Attributes = ftpFileInfo.IsDirectory ? FileAttributes.Directory : FileAttributes.Normal
                 };
 
-                // Cache the file info
+                // Cache the file info using consistent cache key
                 _fileCache[fileName] = new CachedFileInfo
                 {
                     Name = ftpFileInfo.Name,
                     Size = ftpFileInfo.Size,
                     LastModified = ftpFileInfo.LastModified,
-                    IsDirectory = ftpFileInfo.IsDirectory
+                    IsDirectory = ftpFileInfo.IsDirectory,
+                    IsModified = false
                 };
+
+                _logger.LogDebug("Cached file info for {FileName}: Size={Size}, IsDirectory={IsDirectory}", 
+                    fileName, ftpFileInfo.Size, ftpFileInfo.IsDirectory);
 
                 return NtStatus.Success;
             }
@@ -550,16 +689,40 @@ public class FtpVirtualFileSystem : IDokanOperations, IVirtualDrive
                                 Success = true
                             });
                         }
-                        catch (Exception ex)
+                        catch (UnauthorizedAccessException ex)
                         {
-                            _logger.LogError(ex, "Failed to sync modified file {FileName}", fileName);
+                            _logger.LogError(ex, "Access denied uploading modified file {FileName}", fileName);
                             
                             OnFileOperation(new VirtualFileSystemEventArgs
                             {
                                 FilePath = fileName,
                                 Operation = OperationType.Modify,
                                 Success = false,
-                                ErrorMessage = ex.Message
+                                ErrorMessage = "Access denied: " + ex.Message
+                            });
+                        }
+                        catch (IOException ex)
+                        {
+                            _logger.LogError(ex, "IO error uploading modified file {FileName}", fileName);
+                            
+                            OnFileOperation(new VirtualFileSystemEventArgs
+                            {
+                                FilePath = fileName,
+                                Operation = OperationType.Modify,
+                                Success = false,
+                                ErrorMessage = "IO error: " + ex.Message
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Unexpected error uploading modified file {FileName}", fileName);
+                            
+                            OnFileOperation(new VirtualFileSystemEventArgs
+                            {
+                                FilePath = fileName,
+                                Operation = OperationType.Modify,
+                                Success = false,
+                                ErrorMessage = "Unexpected error: " + ex.Message
                             });
                         }
                     });
@@ -568,9 +731,17 @@ public class FtpVirtualFileSystem : IDokanOperations, IVirtualDrive
                 stream.Dispose();
             }
         }
+        catch (UnauthorizedAccessException ex)
+        {
+            _logger.LogError(ex, "Access denied during cleanup of file {FileName}", fileName);
+        }
+        catch (IOException ex)
+        {
+            _logger.LogError(ex, "IO error during cleanup of file {FileName}", fileName);
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error during cleanup of file {FileName}", fileName);
+            _logger.LogError(ex, "Unexpected error during cleanup of file {FileName}", fileName);
         }
     }
 
@@ -924,8 +1095,30 @@ public class FtpVirtualFileSystem : IDokanOperations, IVirtualDrive
                     
                     if (completedTask == 0 && ftpTask.IsCompletedSuccessfully)
                     {
-                        var stream = ftpTask.Result;
-                        _openFiles[fileName] = stream;
+                        var ftpStream = ftpTask.Result;
+                        
+                        // Always convert to MemoryStream for consistent behavior
+                        var memoryStream = new MemoryStream();
+                        if (ftpStream.Length > 0)
+                        {
+                            ftpStream.Position = 0;
+                            ftpStream.CopyTo(memoryStream);
+                        }
+                        ftpStream.Dispose();
+                        memoryStream.Position = 0;
+                        
+                        _openFiles[fileName] = memoryStream;
+                        
+                        // Update file cache with correct size
+                        _fileCache[fileName] = new CachedFileInfo
+                        {
+                            Name = Path.GetFileName(fileName),
+                            Size = memoryStream.Length,
+                            LastModified = DateTime.UtcNow,
+                            IsModified = false
+                        };
+                        
+                        _logger.LogDebug("Downloaded file {FileName} for reading, size: {Size} bytes", fileName, memoryStream.Length);
                     }
                     else
                     {
@@ -933,8 +1126,9 @@ public class FtpVirtualFileSystem : IDokanOperations, IVirtualDrive
                         return NtStatus.IoTimeout;
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    _logger.LogError(ex, "Failed to download file {FileName} during CreateFile", fileName);
                     return NtStatus.ObjectNameNotFound;
                 }
             }
@@ -968,7 +1162,7 @@ public class FtpVirtualFileSystem : IDokanOperations, IVirtualDrive
             return "/";
 
         // Convert Windows path separators to FTP path separators
-        var ftpPath = windowsPath.Replace('\\', '/');
+        var ftpPath = windowsPath.Replace("\\", "/");
         
         // Ensure path starts with /
         if (!ftpPath.StartsWith("/"))
@@ -978,7 +1172,18 @@ public class FtpVirtualFileSystem : IDokanOperations, IVirtualDrive
         while (ftpPath.Contains("//"))
             ftpPath = ftpPath.Replace("//", "/");
 
+        // Handle special case where path might start with multiple slashes
+        if (ftpPath.StartsWith("//"))
+            ftpPath = "/" + ftpPath.Substring(2);
+
         return ftpPath;
+    }
+
+    private string GetCacheKey(string fileName)
+    {
+        // Normalize the file name for consistent cache keys
+        var normalizedPath = NormalizeFtpPath(fileName);
+        return normalizedPath.TrimStart('/');
     }
 
     #endregion

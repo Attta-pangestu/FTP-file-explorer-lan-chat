@@ -39,7 +39,16 @@ public enum OperationType
     Copy,
     ListDirectory,
     CreateDirectory,
-    DeleteDirectory
+    DeleteDirectory,
+    // New operations for FTP Explorer
+    OpenFile,
+    EditFile,
+    UploadFile,
+    DownloadFile,
+    PreviewFile,
+    RefreshDirectory,
+    NavigateUp,
+    NavigateToDirectory
 }
 
 /// <summary>

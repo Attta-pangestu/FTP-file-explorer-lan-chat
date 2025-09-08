@@ -3,8 +3,12 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Input;
+using WpfApplication = System.Windows.Application;
+using WpfMessageBox = System.Windows.MessageBox;
 using FtpVirtualDrive.Core.Interfaces;
 using FtpVirtualDrive.Core.Models;
+using FtpVirtualDrive.UI.Views;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Toolkit.Mvvm.Input;
 
@@ -19,36 +23,43 @@ public class MainViewModel : BaseViewModel
     private readonly IVirtualDrive _virtualDrive;
     private readonly IActivityLogger _activityLogger;
     private readonly ICredentialManager _credentialManager;
+    private readonly ITempFileService _tempFileService;
     private readonly ILogger<MainViewModel> _logger;
 
-    private string _host = string.Empty;
+    private string _host = "223.25.98.220"; // Default test FTP server
     private int _port = 21;
-    private string _username = string.Empty;
-    private string _password = string.Empty;
-    private bool _useSSL = true;
+    private string _username = "User_GM"; // Default test username
+    private string _password = "PTRJ_GM"; // Default test password
+    private bool _useSSL = false; // Disable SSL for testing
     private bool _isConnected;
     private bool _isMounted;
     private string _statusMessage = "Ready";
     private string _selectedDriveLetter = "Z";
     private bool _isConnecting;
     private string _connectionName = string.Empty;
+    private string _tempFolderPath = Path.Combine(Path.GetTempPath(), "FtpVirtualDrive");
 
     public MainViewModel(
         IFtpClient ftpClient,
         IVirtualDrive virtualDrive,
         IActivityLogger activityLogger,
         ICredentialManager credentialManager,
+        ITempFileService tempFileService,
         ILogger<MainViewModel> logger)
     {
         _ftpClient = ftpClient ?? throw new ArgumentNullException(nameof(ftpClient));
         _virtualDrive = virtualDrive ?? throw new ArgumentNullException(nameof(virtualDrive));
         _activityLogger = activityLogger ?? throw new ArgumentNullException(nameof(activityLogger));
         _credentialManager = credentialManager ?? throw new ArgumentNullException(nameof(credentialManager));
+        _tempFileService = tempFileService ?? throw new ArgumentNullException(nameof(tempFileService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
         ActivityLogs = new ObservableCollection<ActivityLog>();
         AvailableDriveLetters = new ObservableCollection<string>();
         SavedConnections = new ObservableCollection<string>();
+
+        // Initialize temp file service with the default path
+        _tempFileService.TempFolderPath = _tempFolderPath;
 
         // Initialize commands
         ConnectCommand = new AsyncRelayCommand(ConnectAsync, () => !IsConnecting && !IsConnected);
@@ -56,9 +67,11 @@ public class MainViewModel : BaseViewModel
         MountCommand = new AsyncRelayCommand(MountAsync, () => IsConnected && !IsMounted);
         UnmountCommand = new AsyncRelayCommand(UnmountAsync, () => IsMounted);
         SaveCredentialsCommand = new AsyncRelayCommand(SaveCredentialsAsync);
-        LoadCredentialsCommand = new AsyncRelayCommand<string>(LoadCredentialsAsync);
+        LoadCredentialsCommand = new AsyncRelayCommand(param => LoadCredentialsAsync((string)param!));
         ExportLogsCommand = new AsyncRelayCommand(ExportLogsAsync);
         RefreshLogsCommand = new AsyncRelayCommand(RefreshLogsAsync);
+        OpenFtpExplorerCommand = new RelayCommand(OpenFtpExplorer, () => IsConnected);
+        ChooseTempFolderCommand = new RelayCommand(ChooseTempFolder);
 
         // Subscribe to events
         _ftpClient.OperationCompleted += OnFtpOperationCompleted;
@@ -148,6 +161,29 @@ public class MainViewModel : BaseViewModel
         set => SetProperty(ref _connectionName, value);
     }
 
+    public string TempFolderPath
+    {
+        get => _tempFolderPath;
+        set
+        {
+            if (SetProperty(ref _tempFolderPath, value))
+            {
+                // Update the temp file service with the new path
+                try
+                {
+                    _tempFileService.TempFolderPath = value;
+                    StatusMessage = "Temp folder path updated";
+                    _logger.LogInformation("Temp folder path updated to: {Path}", value);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to update temp folder path");
+                    StatusMessage = "Failed to update temp folder path";
+                }
+            }
+        }
+    }
+
     public ObservableCollection<ActivityLog> ActivityLogs { get; }
     public ObservableCollection<string> AvailableDriveLetters { get; }
     public ObservableCollection<string> SavedConnections { get; }
@@ -164,6 +200,8 @@ public class MainViewModel : BaseViewModel
     public ICommand LoadCredentialsCommand { get; }
     public ICommand ExportLogsCommand { get; }
     public ICommand RefreshLogsCommand { get; }
+    public ICommand OpenFtpExplorerCommand { get; }
+    public ICommand ChooseTempFolderCommand { get; }
 
     #endregion
 
@@ -198,7 +236,7 @@ public class MainViewModel : BaseViewModel
             {
                 StatusMessage = "Failed to connect to FTP server";
                 _logger.LogWarning("Failed to connect to FTP server");
-                MessageBox.Show("Failed to connect to FTP server. Please check your credentials and try again.", 
+                WpfMessageBox.Show("Failed to connect to FTP server. Please check your credentials and try again.", 
                     "Connection Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
@@ -206,7 +244,7 @@ public class MainViewModel : BaseViewModel
         {
             StatusMessage = "Connection error";
             _logger.LogError(ex, "Error during FTP connection");
-            MessageBox.Show($"Connection error: {ex.Message}", 
+            WpfMessageBox.Show($"Connection error: {ex.Message}", 
                 "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
@@ -236,7 +274,7 @@ public class MainViewModel : BaseViewModel
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during disconnect");
-            MessageBox.Show($"Disconnect error: {ex.Message}", 
+            WpfMessageBox.Show($"Disconnect error: {ex.Message}", 
                 "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -255,7 +293,7 @@ public class MainViewModel : BaseViewModel
                 StatusMessage = $"Mounted as {SelectedDriveLetter}: drive";
                 _logger.LogInformation("Successfully mounted virtual drive");
                 
-                MessageBox.Show($"FTP server mounted as {SelectedDriveLetter}: drive\nYou can now access files through Windows Explorer.", 
+                WpfMessageBox.Show($"FTP server mounted as {SelectedDriveLetter}: drive\nYou can now access files through Windows Explorer.", 
                     "Mount Successful", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             else
@@ -283,14 +321,14 @@ public class MainViewModel : BaseViewModel
                                  "This feature will be available in a future update.";
                 }
                 
-                MessageBox.Show(errorDetails, "Mount Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+                WpfMessageBox.Show(errorDetails, "Mount Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
         catch (Exception ex)
         {
             StatusMessage = "Mount error";
             _logger.LogError(ex, "Error during mount operation");
-            MessageBox.Show($"Mount error: {ex.Message}", 
+            WpfMessageBox.Show($"Mount error: {ex.Message}", 
                 "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -357,7 +395,7 @@ public class MainViewModel : BaseViewModel
         {
             StatusMessage = "Unmount error";
             _logger.LogError(ex, "Error during unmount operation");
-            MessageBox.Show($"Unmount error: {ex.Message}", 
+            WpfMessageBox.Show($"Unmount error: {ex.Message}", 
                 "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -368,7 +406,7 @@ public class MainViewModel : BaseViewModel
         {
             if (string.IsNullOrWhiteSpace(ConnectionName))
             {
-                MessageBox.Show("Please enter a connection name to save credentials.", 
+                WpfMessageBox.Show("Please enter a connection name to save credentials.", 
                     "Missing Information", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
@@ -389,19 +427,19 @@ public class MainViewModel : BaseViewModel
             {
                 StatusMessage = "Credentials saved";
                 await LoadSavedConnectionsAsync();
-                MessageBox.Show("Credentials saved successfully.", 
+                WpfMessageBox.Show("Credentials saved successfully.", 
                     "Success", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             else
             {
-                MessageBox.Show("Failed to save credentials.", 
+                WpfMessageBox.Show("Failed to save credentials.", 
                     "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error saving credentials");
-            MessageBox.Show($"Error saving credentials: {ex.Message}", 
+            WpfMessageBox.Show($"Error saving credentials: {ex.Message}", 
                 "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -428,14 +466,14 @@ public class MainViewModel : BaseViewModel
             }
             else
             {
-                MessageBox.Show("Failed to load saved credentials.", 
+                WpfMessageBox.Show("Failed to load saved credentials.", 
                     "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error loading credentials");
-            MessageBox.Show($"Error loading credentials: {ex.Message}", 
+            WpfMessageBox.Show($"Error loading credentials: {ex.Message}", 
                 "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -467,12 +505,12 @@ public class MainViewModel : BaseViewModel
                 if (success)
                 {
                     StatusMessage = "Logs exported successfully";
-                    MessageBox.Show("Activity logs exported successfully.", 
+                    WpfMessageBox.Show("Activity logs exported successfully.", 
                         "Export Complete", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
                 else
                 {
-                    MessageBox.Show("Failed to export activity logs.", 
+                    WpfMessageBox.Show("Failed to export activity logs.", 
                         "Export Failed", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
@@ -480,7 +518,7 @@ public class MainViewModel : BaseViewModel
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error exporting logs");
-            MessageBox.Show($"Error exporting logs: {ex.Message}", 
+            WpfMessageBox.Show($"Error exporting logs: {ex.Message}", 
                 "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -491,7 +529,7 @@ public class MainViewModel : BaseViewModel
         {
             var recentLogs = await _activityLogger.GetRecentActivityLogsAsync(100);
             
-            Application.Current.Dispatcher.Invoke(() =>
+            WpfApplication.Current.Dispatcher.Invoke(() =>
             {
                 ActivityLogs.Clear();
                 foreach (var log in recentLogs)
@@ -512,7 +550,7 @@ public class MainViewModel : BaseViewModel
 
     private void OnFtpOperationCompleted(object? sender, FtpOperationEventArgs e)
     {
-        Application.Current.Dispatcher.Invoke(async () =>
+        WpfApplication.Current.Dispatcher.Invoke(async () =>
         {
             await RefreshLogsAsync();
             
@@ -525,7 +563,7 @@ public class MainViewModel : BaseViewModel
 
     private void OnMountStatusChanged(object? sender, MountStatusEventArgs e)
     {
-        Application.Current.Dispatcher.Invoke(() =>
+        WpfApplication.Current.Dispatcher.Invoke(() =>
         {
             IsMounted = e.IsMounted;
             
@@ -546,7 +584,7 @@ public class MainViewModel : BaseViewModel
 
     private void OnFileOperation(object? sender, VirtualFileSystemEventArgs e)
     {
-        Application.Current.Dispatcher.Invoke(async () =>
+        WpfApplication.Current.Dispatcher.Invoke(async () =>
         {
             await RefreshLogsAsync();
             StatusMessage = $"{e.Operation}: {Path.GetFileName(e.FilePath)}";
@@ -563,7 +601,7 @@ public class MainViewModel : BaseViewModel
         {
             var driveLetters = await _virtualDrive.GetAvailableDriveLettersAsync();
             
-            Application.Current.Dispatcher.Invoke(() =>
+            WpfApplication.Current.Dispatcher.Invoke(() =>
             {
                 AvailableDriveLetters.Clear();
                 foreach (var letter in driveLetters)
@@ -589,7 +627,7 @@ public class MainViewModel : BaseViewModel
         {
             var connections = await _credentialManager.ListCredentialsAsync();
             
-            Application.Current.Dispatcher.Invoke(() =>
+            WpfApplication.Current.Dispatcher.Invoke(() =>
             {
                 SavedConnections.Clear();
                 foreach (var connection in connections)
@@ -601,6 +639,106 @@ public class MainViewModel : BaseViewModel
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error loading saved connections");
+        }
+    }
+
+    private void OpenFtpExplorer()
+    {
+        try
+        {
+            _logger.LogInformation("Opening FTP File Explorer...");
+            
+            var serviceProvider = ((App)WpfApplication.Current).ServiceProvider;
+            if (serviceProvider == null)
+            {
+                _logger.LogError("Service provider is not available");
+                StatusMessage = "Failed to open FTP File Explorer - Service provider unavailable";
+                WpfMessageBox.Show("Service provider is not available. Application may not be properly initialized.", 
+                    "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            
+            _logger.LogInformation("Service provider is available, resolving FtpFileExplorerWindow...");
+            
+            // Check if FTP client is connected
+            if (!IsConnected)
+            {
+                _logger.LogWarning("FTP client is not connected");
+                WpfMessageBox.Show("Please connect to an FTP server first before opening the File Explorer.", 
+                    "Not Connected", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var ftpExplorerWindow = serviceProvider.GetRequiredService<FtpFileExplorerWindow>();
+            
+            _logger.LogInformation("FtpFileExplorerWindow resolved successfully, showing window...");
+            
+            ftpExplorerWindow.Show();
+            ftpExplorerWindow.Activate();
+            
+            StatusMessage = "FTP File Explorer opened";
+            _logger.LogInformation("FTP File Explorer opened successfully");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error opening FTP File Explorer: {Message}", ex.Message);
+            StatusMessage = "Error opening FTP File Explorer";
+            
+            var detailedMessage = $"Failed to open FTP File Explorer:\n\n" +
+                                $"Error: {ex.Message}\n\n" +
+                                $"Type: {ex.GetType().Name}";
+            
+            if (ex.InnerException != null)
+            {
+                detailedMessage += $"\n\nInner Exception: {ex.InnerException.Message}";
+            }
+            
+            WpfMessageBox.Show(detailedMessage, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+    
+    private void ChooseTempFolder()
+    {
+        try
+        {
+            using var folderDialog = new global::System.Windows.Forms.FolderBrowserDialog
+            {
+                Description = "Select a folder to store temporary FTP files",
+                SelectedPath = TempFolderPath,
+                ShowNewFolderButton = true
+            };
+            
+            var result = folderDialog.ShowDialog();
+            if (result == System.Windows.Forms.DialogResult.OK && !string.IsNullOrEmpty(folderDialog.SelectedPath))
+            {
+                var selectedPath = folderDialog.SelectedPath;
+                
+                // Test if we can create a directory and write to it
+                try
+                {
+                    Directory.CreateDirectory(selectedPath);
+                    var testFile = Path.Combine(selectedPath, "test_write_access.tmp");
+                    File.WriteAllText(testFile, "test");
+                    File.Delete(testFile);
+                    
+                    // If we get here, the path is valid and writable
+                    TempFolderPath = selectedPath;
+                    StatusMessage = $"Temp folder updated: {selectedPath}";
+                    _logger.LogInformation("User selected temp folder: {Path}", selectedPath);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Selected temp folder is not writable: {Path}", selectedPath);
+                    WpfMessageBox.Show($"The selected folder is not writable:\n{selectedPath}\n\nError: {ex.Message}\n\nPlease choose a different folder.",
+                        "Folder Not Writable", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error choosing temp folder");
+            WpfMessageBox.Show($"Error selecting folder: {ex.Message}", 
+                "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 

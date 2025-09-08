@@ -500,6 +500,7 @@ internal class PooledFtpClientWrapper : IPooledFtpClient
     public Task<bool> DeleteFileAsync(string remotePath) => _clientService.DeleteFileAsync(remotePath);
     public Task<IEnumerable<FtpFileInfo>> ListDirectoryAsync(string remotePath) => _clientService.ListDirectoryAsync(remotePath);
     public Task<bool> CreateDirectoryAsync(string remotePath) => _clientService.CreateDirectoryAsync(remotePath);
+    public Task<bool> RenameAsync(string remotePath, string newName) => _clientService.RenameAsync(remotePath, newName);
     public Task<bool> FileExistsAsync(string remotePath) => _clientService.FileExistsAsync(remotePath);
     public Task<FtpFileInfo?> GetFileInfoAsync(string remotePath) => _clientService.GetFileInfoAsync(remotePath);
 

@@ -19,6 +19,7 @@ public class FileOperationQueue : IFileOperationQueue
     private readonly CancellationTokenSource _shutdownTokenSource;
     private readonly Task[] _processorTasks;
     private readonly SemaphoreSlim _concurrencyLimiter;
+    private readonly int _maxConcurrency;
     
     private long _completedOperations;
     private long _failedOperations;
@@ -32,6 +33,8 @@ public class FileOperationQueue : IFileOperationQueue
         
         if (maxConcurrency < 1)
             throw new ArgumentException("Max concurrency must be at least 1", nameof(maxConcurrency));
+        
+        _maxConcurrency = maxConcurrency;
         
         _channel = Channel.CreateUnbounded<QueuedOperation>(new UnboundedChannelOptions
         {
@@ -67,9 +70,10 @@ public class FileOperationQueue : IFileOperationQueue
         var tcs = new TaskCompletionSource<TResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var effectiveTimeout = timeout ?? TimeSpan.FromSeconds(30);
         
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownTokenSource.Token);
-        using var timeoutCts = new CancellationTokenSource(effectiveTimeout);
-        using var combinedCts = CancellationTokenSource.CreateLinkedTokenSource(linkedCts.Token, timeoutCts.Token);
+        // Create cancellation token sources with proper disposal
+        var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownTokenSource.Token);
+        var timeoutCts = new CancellationTokenSource(effectiveTimeout);
+        var combinedCts = CancellationTokenSource.CreateLinkedTokenSource(linkedCts.Token, timeoutCts.Token);
         
         var queuedOp = new QueuedOperation
         {
@@ -79,36 +83,56 @@ public class FileOperationQueue : IFileOperationQueue
             {
                 try
                 {
+                    // Use the provided cancellation token instead of combined one to avoid conflicts
                     var result = await operation(ct);
                     tcs.TrySetResult(result);
                 }
                 catch (OperationCanceledException ex)
                 {
-                    tcs.TrySetCanceled(ex.CancellationToken);
+                    if (timeoutCts.IsCancellationRequested)
+                    {
+                        tcs.TrySetException(new TimeoutException($"Operation timed out after {effectiveTimeout}"));
+                    }
+                    else
+                    {
+                        tcs.TrySetCanceled(ex.CancellationToken);
+                    }
                 }
                 catch (Exception ex)
                 {
                     tcs.TrySetException(ex);
                 }
+                finally
+                {
+                    // Dispose cancellation token sources
+                    try
+                    {
+                        combinedCts?.Dispose();
+                        timeoutCts?.Dispose();
+                        linkedCts?.Dispose();
+                    }
+                    catch
+                    {
+                        // Ignore disposal errors
+                    }
+                }
             },
             CancellationToken = combinedCts.Token
         };
         
-        // Register cancellation callback
-        combinedCts.Token.Register(() =>
-        {
-            if (timeoutCts.IsCancellationRequested)
-            {
-                tcs.TrySetException(new TimeoutException($"Operation timed out after {effectiveTimeout}"));
-            }
-            else
-            {
-                tcs.TrySetCanceled(combinedCts.Token);
-            }
-        });
-        
         if (!_channel.Writer.TryWrite(queuedOp))
         {
+            // Clean up if we can't enqueue
+            try
+            {
+                combinedCts?.Dispose();
+                timeoutCts?.Dispose();
+                linkedCts?.Dispose();
+            }
+            catch
+            {
+                // Ignore disposal errors
+            }
             throw new InvalidOperationException("Failed to enqueue operation");
         }
         
@@ -140,7 +164,7 @@ public class FileOperationQueue : IFileOperationQueue
             CompletedOperations = _completedOperations,
             FailedOperations = _failedOperations,
             AverageProcessingTime = avgProcessingTime,
-            MaxConcurrency = _concurrencyLimiter.CurrentCount
+            MaxConcurrency = _maxConcurrency
         };
     }
 
@@ -159,12 +183,14 @@ public class FileOperationQueue : IFileOperationQueue
                     continue;
                 }
                 
-                await _concurrencyLimiter.WaitAsync(_shutdownTokenSource.Token);
+                // Execute operation directly without Task.Run to avoid race conditions
+                var stopwatch = Stopwatch.StartNew();
+                Interlocked.Increment(ref _activeOperations);
                 
-                _ = Task.Run(async () =>
+                try
                 {
-                    var stopwatch = Stopwatch.StartNew();
-                    Interlocked.Increment(ref _activeOperations);
+                    // Acquire semaphore before execution
+                    await _concurrencyLimiter.WaitAsync(operation.CancellationToken);
                     
                     try
                     {
@@ -175,24 +201,28 @@ public class FileOperationQueue : IFileOperationQueue
                         _logger.LogTrace("Operation {OperationId} completed in {ElapsedMs}ms",
                             operation.Id, stopwatch.ElapsedMilliseconds);
                     }
-                    catch (OperationCanceledException)
-                    {
-                        Interlocked.Increment(ref _failedOperations);
-                        _logger.LogDebug("Operation {OperationId} was cancelled", operation.Id);
-                    }
-                    catch (Exception ex)
-                    {
-                        Interlocked.Increment(ref _failedOperations);
-                        _logger.LogError(ex, "Operation {OperationId} failed", operation.Id);
-                    }
                     finally
                     {
-                        stopwatch.Stop();
-                        Interlocked.Add(ref _totalProcessingTime, stopwatch.ElapsedMilliseconds);
-                        Interlocked.Decrement(ref _activeOperations);
+                        // Always release semaphore
                         _concurrencyLimiter.Release();
                     }
-                }, _shutdownTokenSource.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    Interlocked.Increment(ref _failedOperations);
+                    _logger.LogDebug("Operation {OperationId} was cancelled", operation.Id);
+                }
+                catch (Exception ex)
+                {
+                    Interlocked.Increment(ref _failedOperations);
+                    _logger.LogError(ex, "Operation {OperationId} failed", operation.Id);
+                }
+                finally
+                {
+                    stopwatch.Stop();
+                    Interlocked.Add(ref _totalProcessingTime, stopwatch.ElapsedMilliseconds);
+                    Interlocked.Decrement(ref _activeOperations);
+                }
             }
         }
         catch (OperationCanceledException)

@@ -67,6 +67,14 @@ public interface IFtpClient : IDisposable
     Task<bool> CreateDirectoryAsync(string remotePath);
 
     /// <summary>
+    /// Renames a file or directory on the FTP server
+    /// </summary>
+    /// <param name="remotePath">Existing remote path</param>
+    /// <param name="newName">New name (not a full path)</param>
+    /// <returns>True if rename was successful</returns>
+    Task<bool> RenameAsync(string remotePath, string newName);
+
+    /// <summary>
     /// Checks if a file exists on the FTP server
     /// </summary>
     /// <param name="remotePath">Remote file path</param>

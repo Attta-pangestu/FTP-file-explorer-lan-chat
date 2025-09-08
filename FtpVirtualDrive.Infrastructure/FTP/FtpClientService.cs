@@ -357,6 +357,54 @@ public class FtpClientService : Core.Interfaces.IFtpClient
         }
     }
 
+    public async Task<bool> RenameAsync(string remotePath, string newName)
+    {
+        EnsureConnected();
+
+        try
+        {
+            var parentPath = Path.GetDirectoryName(remotePath.Replace('\\', '/'))?.Replace('\\', '/') ?? "/";
+            var newPath = parentPath.TrimEnd('/') + "/" + newName;
+            
+            await _ftpClient!.MoveFile(remotePath, newPath);
+            
+            _logger.LogDebug("Renamed {OldPath} to {NewPath}", remotePath, newPath);
+            await LogActivityAsync(ActivityLog.CreateSuccess(
+                OperationType.Rename, 
+                remotePath, 
+                $"Renamed to {newName}", 
+                ConnectionInfo?.Username));
+
+            OnOperationCompleted(new FtpOperationEventArgs
+            {
+                Operation = OperationType.Rename,
+                FilePath = remotePath,
+                Success = true
+            });
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to rename {RemotePath} to {NewName}", remotePath, newName);
+            await LogActivityAsync(ActivityLog.Failure(
+                OperationType.Rename, 
+                remotePath, 
+                ex.Message, 
+                ConnectionInfo?.Username));
+
+            OnOperationCompleted(new FtpOperationEventArgs
+            {
+                Operation = OperationType.Rename,
+                FilePath = remotePath,
+                Success = false,
+                ErrorMessage = ex.Message
+            });
+
+            return false;
+        }
+    }
+
     public async Task<bool> FileExistsAsync(string remotePath)
     {
         EnsureConnected();
