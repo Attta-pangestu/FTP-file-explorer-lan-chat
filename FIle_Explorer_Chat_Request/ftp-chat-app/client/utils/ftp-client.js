@@ -6,13 +6,32 @@ const config = require('./config');
 
 // Connection Pool Management
 class FTPConnectionPool {
-  constructor(maxConnections = 3) {
+  constructor(maxConnections = 15) { // Increased to 15 for maximum concurrency
     this.maxConnections = maxConnections;
     this.connections = [];
     this.availableConnections = [];
     this.busyConnections = new Set();
     this.connectionConfig = null;
     this.isInitialized = false;
+    
+    // Performance timing constants - optimized for speed
+    this.CONNECTION_TIMEOUT = 5000; // 5 seconds (reduced from 8)
+    this.LIST_TIMEOUT = 3000; // 3 seconds (reduced from 5)
+    this.DOWNLOAD_TIMEOUT = 5000; // 5 seconds for downloads
+    this.UPLOAD_TIMEOUT = 8000; // 8 seconds for uploads
+    
+    // Connection health monitoring
+    this.healthCheckInterval = null;
+    this.connectionHealth = new Map();
+    
+    // Performance tracking
+    this.performanceStats = {
+      totalConnections: 0,
+      activeConnections: 0,
+      averageResponseTime: 0,
+      fastResponseCount: 0,
+      slowResponseCount: 0
+    };
   }
 
   async initialize(ftpConfig) {
@@ -146,6 +165,43 @@ class FTPConnectionPool {
       busy: this.busyConnections.size,
       maxConnections: this.maxConnections
     };
+  }
+
+  // Warm up the connection pool by pre-establishing connections
+  async warmUp(targetConnections = 2) {
+    if (!this.isInitialized) {
+      console.warn('Cannot warm up connection pool: not initialized');
+      return;
+    }
+
+    const connectionsToCreate = Math.min(
+      targetConnections - this.availableConnections.length,
+      this.maxConnections - this.connections.length
+    );
+
+    if (connectionsToCreate <= 0) {
+      console.log('Connection pool already warmed up');
+      return;
+    }
+
+    console.log(`Warming up connection pool: creating ${connectionsToCreate} connections`);
+    
+    const warmUpPromises = [];
+    for (let i = 0; i < connectionsToCreate; i++) {
+      warmUpPromises.push(
+        this.createConnection().catch(error => {
+          console.warn('Failed to create warm-up connection:', error.message);
+          return null;
+        })
+      );
+    }
+
+    const results = await Promise.allSettled(warmUpPromises);
+    const successful = results.filter(result => 
+      result.status === 'fulfilled' && result.value !== null
+    ).length;
+    
+    console.log(`Connection pool warm-up completed: ${successful}/${connectionsToCreate} connections created`);
   }
 }
 
@@ -886,6 +942,958 @@ function formatSpeed(bytesPerSecond) {
   }
 }
 
+// Enhanced file download and temporary storage system
+class EnhancedFileDownloader {
+  constructor() {
+    this.tempDirectory = null;
+    this.activeDownloads = new Map();
+    this.downloadQueue = [];
+    this.maxConcurrentDownloads = 3;
+    this.tempFileCleanupInterval = null;
+    this.maxTempFileAge = 24 * 60 * 60 * 1000; // 24 hours
+    this.tempFileQuota = 1024 * 1024 * 1024; // 1GB quota
+    this.usedTempSpace = 0;
+    this.downloadStats = {
+      totalDownloads: 0,
+      successfulDownloads: 0,
+      failedDownloads: 0,
+      totalBytesDownloaded: 0,
+      averageDownloadTime: 0,
+      tempFilesCleaned: 0
+    };
+  }
+
+  // Initialize temporary directory
+  async init() {
+    try {
+      // Use system temp directory or create app-specific temp dir
+      const appTempDir = path.join(app.getPath('temp'), 'ftp-explorer');
+      await fs.mkdir(appTempDir, { recursive: true });
+      this.tempDirectory = appTempDir;
+      
+      // Start cleanup interval
+      this.startCleanupInterval();
+      
+      console.log(`Enhanced file downloader initialized with temp dir: ${this.tempDirectory}`);
+      return true;
+    } catch (error) {
+      console.error('Failed to initialize enhanced file downloader:', error);
+      return false;
+    }
+  }
+
+  // Download file to temporary directory for opening
+  async downloadToTemp(remotePath, options = {}) {
+    const { 
+      openAfterDownload = false, 
+      fileName = null,
+      customTempDir = null,
+      priority = 'normal',
+      onProgress = null,
+      allowResume = true
+    } = options;
+
+    if (!this.tempDirectory) {
+      await this.init();
+    }
+
+    // Generate unique filename if not provided
+    const finalFileName = fileName || path.posix.basename(remotePath) || `temp_file_${Date.now()}`;
+    const tempFilePath = path.join(customTempDir || this.tempDirectory, finalFileName);
+
+    const downloadId = `download_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    try {
+      console.log(`Starting enhanced download to temp: ${remotePath} -> ${tempFilePath}`);
+
+      // Check if file already exists in temp directory
+      if (await fs.access(tempFilePath).then(() => true).catch(() => false)) {
+        const stats = await fs.stat(tempFilePath);
+        
+        // Check if file is complete and valid
+        if (await this._validateTempFile(tempFilePath, remotePath)) {
+          console.log(`File already exists in temp directory: ${tempFilePath}`);
+          
+          if (openAfterDownload) {
+            await this.openFile(tempFilePath);
+          }
+          
+          return {
+            success: true,
+            tempFilePath,
+            downloadId,
+            message: 'File already available in temp directory',
+            cached: true
+          };
+        }
+      }
+
+      // Add to active downloads
+      this.activeDownloads.set(downloadId, {
+        remotePath,
+        tempFilePath,
+        startTime: Date.now(),
+        status: 'downloading',
+        priority
+      });
+
+      // Perform download with enhanced features
+      const result = await this._downloadWithEnhancedFeatures(
+        remotePath, 
+        tempFilePath, 
+        { allowResume, onProgress, priority }
+      );
+
+      // Update download statistics
+      this.downloadStats.totalDownloads++;
+      if (result.success) {
+        this.downloadStats.successfulDownloads++;
+        this.downloadStats.totalBytesDownloaded += result.fileSize || 0;
+      } else {
+        this.downloadStats.failedDownloads++;
+      }
+
+      // Clean up download record
+      this.activeDownloads.delete(downloadId);
+
+      // Open file if requested
+      if (result.success && openAfterDownload) {
+        await this.openFile(tempFilePath);
+      }
+
+      return {
+        success: result.success,
+        tempFilePath,
+        downloadId,
+        message: result.message,
+        fileSize: result.fileSize,
+        downloadTime: Date.now() - (this.activeDownloads.get(downloadId)?.startTime || Date.now()),
+        cached: false
+      };
+
+    } catch (error) {
+      console.error('Enhanced download failed:', error);
+      
+      // Clean up download record
+      this.activeDownloads.delete(downloadId);
+      this.downloadStats.failedDownloads++;
+      this.downloadStats.totalDownloads++;
+
+      throw new Error(`Enhanced download failed: ${error.message}`);
+    }
+  }
+
+  // Enhanced download with advanced features
+  async _downloadWithEnhancedFeatures(remotePath, localPath, options = {}) {
+    const { allowResume = true, onProgress = null, priority = 'normal' } = options;
+    
+    try {
+      // Ensure we're connected
+      if (!isConnected || !ftpClient) {
+        await connect();
+      }
+
+      // Normalize remote path
+      const normalizedRemotePath = path.posix.normalize(remotePath);
+      if (normalizedRemotePath.includes('..')) {
+        throw new Error('Path traversal is not allowed');
+      }
+
+      console.log(`Enhanced downloading: ${normalizedRemotePath} -> ${localPath}`);
+
+      // Ensure local directory exists
+      const localDir = path.dirname(localPath);
+      await fs.mkdir(localDir, { recursive: true });
+
+      // Get remote file size
+      let remoteFileSize = 0;
+      let resumePosition = 0;
+
+      try {
+        const fileList = await ftpClient.list(path.posix.dirname(normalizedRemotePath));
+        const fileName = path.posix.basename(normalizedRemotePath);
+        const fileInfo = fileList.find(item => item.name === fileName && item.type === 'file');
+        
+        if (fileInfo && fileInfo.size) {
+          remoteFileSize = parseInt(fileInfo.size);
+        }
+      } catch (listError) {
+        console.warn('Could not get remote file size:', listError.message);
+      }
+
+      // Check if file exists for resume
+      if (allowResume && await fs.access(localPath).then(() => true).catch(() => false)) {
+        const localStats = await fs.stat(localPath);
+        resumePosition = localStats.size;
+
+        if (remoteFileSize > 0 && resumePosition >= remoteFileSize) {
+          console.log('File already complete in temp directory');
+          return {
+            success: true,
+            localPath,
+            fileSize: resumePosition,
+            message: 'File already complete'
+          };
+        }
+      }
+
+      // Track download performance
+      const downloadStartTime = Date.now();
+      let downloadedBytes = resumePosition;
+      const chunks = [];
+
+      // Enhanced progress tracking
+      const progressTracker = {
+        write: (chunk) => {
+          chunks.push(chunk);
+          downloadedBytes += chunk.length;
+          
+          if (onProgress && remoteFileSize > 0) {
+            const progress = Math.round((downloadedBytes / remoteFileSize) * 100);
+            const speed = this.calculateDownloadSpeed(downloadedBytes - resumePosition, Date.now());
+            const estimatedTimeRemaining = this.calculateEstimatedTimeRemaining(
+              downloadedBytes - resumePosition, 
+              remoteFileSize - resumePosition, 
+              speed
+            );
+            
+            onProgress(progress, downloadedBytes, remoteFileSize, 
+              `Downloading... ${formatSpeed(speed)}${estimatedTimeRemaining ? ` (ETA: ${estimatedTimeRemaining})` : ''}`);
+          }
+        },
+        end: () => {}
+      };
+
+      // Perform download
+      if (resumePosition > 0) {
+        try {
+          await ftpClient.ftp.send(`REST ${resumePosition}`);
+          await ftpClient.downloadTo(progressTracker, normalizedRemotePath);
+          
+          // Append to existing file
+          const newData = Buffer.concat(chunks);
+          await fs.appendFile(localPath, newData);
+        } catch (resumeError) {
+          console.warn('Resume failed, starting fresh download:', resumeError.message);
+          resumePosition = 0;
+          downloadedBytes = 0;
+          chunks.length = 0;
+          await ftpClient.downloadTo(progressTracker, normalizedRemotePath);
+          const fileData = Buffer.concat(chunks);
+          await fs.writeFile(localPath, fileData);
+        }
+      } else {
+        await ftpClient.downloadTo(progressTracker, normalizedRemotePath);
+        const fileData = Buffer.concat(chunks);
+        await fs.writeFile(localPath, fileData);
+      }
+
+      const downloadTime = Date.now() - downloadStartTime;
+      this.downloadStats.averageDownloadTime = 
+        (this.downloadStats.averageDownloadTime * (this.downloadStats.totalDownloads - 1) + downloadTime) / 
+        this.downloadStats.totalDownloads;
+
+      // Update temp space usage
+      if (!this.usedTempSpace) {
+        this.usedTempSpace += downloadedBytes;
+      }
+
+      console.log(`Enhanced download completed: ${localPath} (${downloadedBytes} bytes, ${downloadTime}ms)`);
+
+      return {
+        success: true,
+        localPath,
+        fileSize: downloadedBytes,
+        downloadTime,
+        message: 'Enhanced download completed successfully'
+      };
+
+    } catch (error) {
+      console.error('Enhanced download error:', error);
+      throw new Error(`Enhanced download failed: ${error.message}`);
+    }
+  }
+
+  // Open file with appropriate application
+  async openFile(filePath) {
+    try {
+      const { shell } = require('electron');
+      
+      console.log(`Opening file: ${filePath}`);
+      await shell.openPath(filePath);
+      
+      return {
+        success: true,
+        message: 'File opened successfully'
+      };
+    } catch (error) {
+      console.error('Failed to open file:', error);
+      throw new Error(`Failed to open file: ${error.message}`);
+    }
+  }
+
+  // Validate temp file
+  async _validateTempFile(filePath, remotePath) {
+    try {
+      // Check file exists
+      const stats = await fs.stat(filePath);
+      if (stats.size === 0) return false;
+
+      // Check file age (remove if too old)
+      const fileAge = Date.now() - stats.mtime.getTime();
+      if (fileAge > this.maxTempFileAge) {
+        await fs.unlink(filePath);
+        return false;
+      }
+
+      // Basic file integrity check
+      const buffer = await fs.readFile(filePath);
+      if (buffer.length !== stats.size) {
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  // Calculate download speed
+  calculateDownloadSpeed(bytesDownloaded, currentTime) {
+    const startTime = this.downloadStats.lastDownloadStartTime || currentTime;
+    const timeElapsed = (currentTime - startTime) / 1000;
+    
+    if (timeElapsed > 0) {
+      this.downloadStats.lastDownloadSpeed = bytesDownloaded / timeElapsed;
+      this.downloadStats.lastDownloadStartTime = currentTime;
+    }
+    
+    return this.downloadStats.lastDownloadSpeed || 0;
+  }
+
+  // Calculate estimated time remaining
+  calculateEstimatedTimeRemaining(downloaded, remaining, currentSpeed) {
+    if (currentSpeed <= 0 || remaining <= 0) return null;
+    
+    const remainingSeconds = remaining / currentSpeed;
+    const minutes = Math.floor(remainingSeconds / 60);
+    const seconds = Math.floor(remainingSeconds % 60);
+    
+    if (minutes > 0) {
+      return `${minutes}m ${seconds}s`;
+    } else {
+      return `${seconds}s`;
+    }
+  }
+
+  // Start temporary file cleanup
+  startCleanupInterval() {
+    if (this.tempFileCleanupInterval) {
+      clearInterval(this.tempFileCleanupInterval);
+    }
+    
+    this.tempFileCleanupInterval = setInterval(async () => {
+      await this.cleanupTempFiles();
+    }, 60 * 60 * 1000); // Run every hour
+  }
+
+  // Cancel active download
+  async cancelDownload(downloadId) {
+    const download = this.activeDownloads.get(downloadId);
+    if (download) {
+      download.status = 'cancelled';
+      this.activeDownloads.delete(downloadId);
+      
+      // Try to delete partial file
+      try {
+        await fs.unlink(download.tempFilePath);
+      } catch (error) {
+        // Ignore errors when cleaning up partial file
+      }
+      
+      return { success: true, message: 'Download cancelled' };
+    }
+    
+    return { success: false, message: 'Download not found' };
+  }
+
+  // Get download status
+  getDownloadStatus(downloadId) {
+    const download = this.activeDownloads.get(downloadId);
+    if (download) {
+      return {
+        ...download,
+        elapsed: Date.now() - download.startTime
+      };
+    }
+    return null;
+  }
+
+  // Get download statistics
+  getDownloadStats() {
+    return {
+      ...this.downloadStats,
+      activeDownloads: this.activeDownloads.size,
+      tempDirectory: this.tempDirectory,
+      usedTempSpace: this.usedTempSpace,
+      tempFileQuota: this.tempFileQuota,
+      availableTempSpace: this.tempFileQuota - this.usedTempSpace
+    };
+  }
+
+  // Clean up all resources
+  async cleanup() {
+    if (this.tempFileCleanupInterval) {
+      clearInterval(this.tempFileCleanupInterval);
+    }
+
+    // Cancel all active downloads
+    const downloadIds = Array.from(this.activeDownloads.keys());
+    for (const downloadId of downloadIds) {
+      await this.cancelDownload(downloadId);
+    }
+
+    // Clean up all temp files
+    if (this.tempDirectory) {
+      try {
+        const files = await fs.readdir(this.tempDirectory);
+        for (const file of files) {
+          await fs.unlink(path.join(this.tempDirectory, file));
+        }
+        this.usedTempSpace = 0;
+      } catch (error) {
+        console.error('Error during cleanup:', error);
+      }
+    }
+
+    console.log('Enhanced file downloader cleaned up');
+  }
+}
+
+// Standalone wrapper functions for enhanced downloader
+function getDownloadStatus(downloadId) {
+  return enhancedDownloader.getDownloadStatus(downloadId);
+}
+
+function getDownloadStats() {
+  return enhancedDownloader.getDownloadStats();
+}
+
+async function cleanupEnhancedDownloader() {
+  return await enhancedDownloader.cleanup();
+}
+
+// Performance monitoring and metrics system
+class PerformanceMonitor {
+  constructor() {
+    this.metrics = {
+      // General application metrics
+      uptime: Date.now(),
+      sessionStart: Date.now(),
+      
+      // FTP connection metrics
+      connections: {
+        total: 0,
+        successful: 0,
+        failed: 0,
+        averageResponseTime: 0,
+        lastConnectionTime: null,
+        connectionFailures: []
+      },
+      
+      // Cache performance metrics
+      cache: {
+        hits: 0,
+        misses: 0,
+        hitRate: 0,
+        averageReadTime: 0,
+        averageWriteTime: 0,
+        memoryCacheSize: 0,
+        diskCacheSize: 0
+      },
+      
+      // Download performance metrics
+      downloads: {
+        total: 0,
+        successful: 0,
+        failed: 0,
+        averageSpeed: 0,
+        averageSize: 0,
+        averageTime: 0,
+        totalBytes: 0,
+        concurrentDownloads: 0
+      },
+      
+      // Lazy loading metrics
+      lazyLoading: {
+        totalLoads: 0,
+        cacheHits: 0,
+        cacheMisses: 0,
+        averageLoadTime: 0,
+        concurrentLoads: 0,
+        prefetchHits: 0,
+        prefetchMisses: 0
+      },
+      
+      // Background worker metrics
+      backgroundWorker: {
+        tasksExecuted: 0,
+        averageTaskTime: 0,
+        smartRefreshCount: 0,
+        manualRefreshCount: 0,
+        skippedTasks: 0
+      }
+    };
+    
+    // Performance thresholds for alerts
+    this.thresholds = {
+      connectionTime: 5000, // 5 seconds
+      downloadSpeed: 1024 * 1024, // 1MB/s
+      cacheReadTime: 100, // 100ms
+      loadTime: 2000, // 2 secondsc
+      taskTime: 1000 // 1 second
+    };
+    
+    // Performance history for trending analysis
+    this.history = [];
+    this.maxHistorySize = 100;
+    
+    // Alert system
+    this.alerts = [];
+    this.maxAlerts = 50;
+    
+    // Start performance monitoring interval
+    this.monitoringInterval = null;
+    this.startMonitoring();
+  }
+
+  // Record connection attempt
+  recordConnection(success, responseTime = 0) {
+    this.metrics.connections.total++;
+    if (success) {
+      this.metrics.connections.successful++;
+    } else {
+      this.metrics.connections.failed++;
+      this.metrics.connections.connectionFailures.push({
+        timestamp: Date.now(),
+        responseTime
+      });
+      
+      // Keep only recent failures
+      if (this.metrics.connections.connectionFailures.length > 20) {
+        this.metrics.connections.connectionFailures.shift();
+      }
+    }
+    
+    this.metrics.connections.lastConnectionTime = Date.now();
+    this.metrics.connections.averageResponseTime = 
+      (this.metrics.connections.averageResponseTime * (this.metrics.connections.total - 1) + responseTime) / 
+      this.metrics.connections.total;
+    
+    this.checkPerformanceThresholds('connection', responseTime);
+    this.updateHistory();
+  }
+
+  // Record cache operation
+  recordCacheOperation(type, duration, size = 0) {
+    if (type === 'hit') {
+      this.metrics.cache.hits++;
+    } else {
+      this.metrics.cache.misses++;
+    }
+    
+    // Calculate hit rate
+    const total = this.metrics.cache.hits + this.metrics.cache.misses;
+    this.metrics.cache.hitRate = total > 0 ? (this.metrics.cache.hits / total) * 100 : 0;
+    
+    // Update average read/write times
+    if (type === 'hit') {
+      this.metrics.cache.averageReadTime = 
+        (this.metrics.cache.averageReadTime * (this.metrics.cache.hits - 1) + duration) / 
+        this.metrics.cache.hits;
+    }
+    
+    this.updateHistory();
+  }
+
+  // Record download operation
+  recordDownload(success, fileSize, duration, speed) {
+    this.metrics.downloads.total++;
+    if (success) {
+      this.metrics.downloads.successful++;
+    } else {
+      this.metrics.downloads.failed++;
+    }
+    
+    // Update averages
+    this.metrics.downloads.averageSpeed = 
+      (this.metrics.downloads.averageSpeed * (this.metrics.downloads.total - 1) + speed) / 
+      this.metrics.downloads.total;
+    
+    this.metrics.downloads.averageSize = 
+      (this.metrics.downloads.averageSize * (this.metrics.downloads.total - 1) + fileSize) / 
+      this.metrics.downloads.total;
+    
+    this.metrics.downloads.averageTime = 
+      (this.metrics.downloads.averageTime * (this.metrics.downloads.total - 1) + duration) / 
+      this.metrics.downloads.total;
+    
+    this.metrics.downloads.totalBytes += fileSize;
+    
+    this.checkPerformanceThresholds('download', speed);
+    this.updateHistory();
+  }
+
+  // Record lazy loading operation
+  recordLazyLoad(cacheHit, duration, prefetchHit = false) {
+    this.metrics.lazyLoading.totalLoads++;
+    
+    if (cacheHit) {
+      this.metrics.lazyLoading.cacheHits++;
+    } else {
+      this.metrics.lazyLoading.cacheMisses++;
+    }
+    
+    if (prefetchHit) {
+      this.metrics.lazyLoading.prefetchHits++;
+    } else {
+      this.metrics.lazyLoading.prefetchMisses++;
+    }
+    
+    // Calculate average load time
+    const totalLoads = this.metrics.lazyLoading.totalLoads;
+    this.metrics.lazyLoading.averageLoadTime = 
+      (this.metrics.lazyLoading.averageLoadTime * (totalLoads - 1) + duration) / 
+      totalLoads;
+    
+    this.checkPerformanceThresholds('load', duration);
+    this.updateHistory();
+  }
+
+  // Record background worker task
+  recordBackgroundTask(taskType, duration) {
+    this.metrics.backgroundWorker.tasksExecuted++;
+    
+    // Update average task time
+    const totalTasks = this.metrics.backgroundWorker.tasksExecuted;
+    this.metrics.backgroundWorker.averageTaskTime = 
+      (this.metrics.backgroundWorker.averageTaskTime * (totalTasks - 1) + duration) / 
+      totalTasks;
+    
+    if (taskType === 'smart') {
+      this.metrics.backgroundWorker.smartRefreshCount++;
+    } else if (taskType === 'manual') {
+      this.metrics.backgroundWorker.manualRefreshCount++;
+    } else if (taskType === 'skipped') {
+      this.metrics.backgroundWorker.skippedTasks++;
+    }
+    
+    this.updateHistory();
+  }
+
+  // Check performance thresholds and generate alerts
+  checkPerformanceThresholds(type, value) {
+    const threshold = this.thresholds[type + 'Time'] || this.thresholds[type];
+    if (threshold && value > threshold) {
+      this.addAlert({
+        type: 'performance',
+        category: type,
+        message: `${type} performance degraded (${value}ms > ${threshold}ms)`,
+        severity: 'warning',
+        timestamp: Date.now(),
+        value,
+        threshold
+      });
+    }
+  }
+
+  // Add alert to the system
+  addAlert(alert) {
+    this.alerts.push(alert);
+    
+    // Keep only recent alerts
+    if (this.alerts.length > this.maxAlerts) {
+      this.alerts.shift();
+    }
+    
+    console.warn(`Performance Alert: ${alert.message}`);
+  }
+
+  // Update performance history
+  updateHistory() {
+    const timestamp = Date.now();
+    const historyEntry = {
+      timestamp,
+      uptime: timestamp - this.metrics.uptime,
+      connections: { ...this.metrics.connections },
+      cache: { ...this.metrics.cache },
+      downloads: { ...this.metrics.downloads },
+      lazyLoading: { ...this.metrics.lazyLoading },
+      backgroundWorker: { ...this.metrics.backgroundWorker }
+    };
+    
+    this.history.push(historyEntry);
+    
+    // Keep only recent history
+    if (this.history.length > this.maxHistorySize) {
+      this.history.shift();
+    }
+  }
+
+  // Get current performance metrics
+  getMetrics() {
+    const uptime = Date.now() - this.metrics.uptime;
+    
+    return {
+      ...this.metrics,
+      uptime,
+      uptimeFormatted: this.formatUptime(uptime),
+      alerts: this.alerts.slice(-10), // Last 10 alerts
+      historyTrends: this.calculateTrends(),
+      systemHealth: this.calculateSystemHealth()
+    };
+  }
+
+  // Get performance summary for UI
+  getPerformanceSummary() {
+    const metrics = this.getMetrics();
+    
+    return {
+      overallScore: this.calculateOverallScore(),
+      connectionHealth: this.calculateConnectionHealth(),
+      cacheEfficiency: this.metrics.cache.hitRate,
+      downloadPerformance: formatSpeed(this.metrics.downloads.averageSpeed),
+      lazyLoadingEfficiency: this.calculateLazyLoadingEfficiency(),
+      recentAlerts: metrics.alerts.slice(-5),
+      recommendations: this.generateRecommendations()
+    };
+  }
+
+  // Calculate system health score
+  calculateSystemHealth() {
+    const connectionScore = this.metrics.connections.total > 0 
+      ? (this.metrics.connections.successful / this.metrics.connections.total) * 100 
+      : 100;
+    
+    const cacheScore = this.metrics.cache.hitRate;
+    const downloadScore = this.metrics.downloads.total > 0 
+      ? (this.metrics.downloads.successful / this.metrics.downloads.total) * 100 
+      : 100;
+    
+    return Math.round((connectionScore + cacheScore + downloadScore) / 3);
+  }
+
+  // Calculate overall performance score
+  calculateOverallScore() {
+    const weights = {
+      connections: 0.3,
+      cache: 0.25,
+      downloads: 0.25,
+      lazyLoading: 0.2
+    };
+    
+    const connectionScore = this.metrics.connections.total > 0 
+      ? (this.metrics.connections.successful / this.metrics.connections.total) * 100 
+      : 100;
+    
+    const cacheScore = this.metrics.cache.hitRate;
+    const downloadScore = this.metrics.downloads.total > 0 
+      ? (this.metrics.downloads.successful / this.metrics.downloads.total) * 100 
+      : 100;
+    
+    const lazyScore = this.calculateLazyLoadingEfficiency();
+    
+    return Math.round(
+      connectionScore * weights.connections +
+      cacheScore * weights.cache +
+      downloadScore * weights.downloads +
+      lazyScore * weights.lazyLoading
+    );
+  }
+
+  // Calculate lazy loading efficiency
+  calculateLazyLoadingEfficiency() {
+    const total = this.metrics.lazyLoading.cacheHits + this.metrics.lazyLoading.cacheMisses;
+    if (total === 0) return 100;
+    
+    return (this.metrics.lazyLoading.cacheHits / total) * 100;
+  }
+
+  // Calculate connection health
+  calculateConnectionHealth() {
+    const total = this.metrics.connections.total;
+    if (total === 0) return 'unknown';
+    
+    const successRate = (this.metrics.connections.successful / total) * 100;
+    
+    if (successRate >= 95) return 'excellent';
+    if (successRate >= 85) return 'good';
+    if (successRate >= 70) return 'fair';
+    return 'poor';
+  }
+
+  // Calculate performance trends
+  calculateTrends() {
+    if (this.history.length < 2) return {};
+    
+    const recent = this.history.slice(-10);
+    const older = this.history.slice(-20, -10);
+    
+    return {
+      connectionTime: this.calculateTrend(recent, older, 'connections', 'averageResponseTime'),
+      cacheHitRate: this.calculateTrend(recent, older, 'cache', 'hitRate'),
+      downloadSpeed: this.calculateTrend(recent, older, 'downloads', 'averageSpeed'),
+      loadTime: this.calculateTrend(recent, older, 'lazyLoading', 'averageLoadTime')
+    };
+  }
+
+  // Calculate individual metric trend
+  calculateTrend(recent, older, category, metric) {
+    if (!older || older.length === 0) return 'stable';
+    
+    const recentValue = recent[recent.length - 1][category][metric];
+    const olderValue = older[older.length - 1][category][metric];
+    
+    const change = ((recentValue - olderValue) / olderValue) * 100;
+    
+    if (Math.abs(change) < 5) return 'stable';
+    if (change > 5) return 'improving';
+    if (change < -5) return 'declining';
+    return 'stable';
+  }
+
+  // Generate performance recommendations
+  generateRecommendations() {
+    const recommendations = [];
+    
+    // Connection recommendations
+    if (this.metrics.connections.averageResponseTime > this.thresholds.connectionTime) {
+      recommendations.push({
+        type: 'connection',
+        priority: 'high',
+        message: 'Consider increasing connection pool size or optimizing network settings'
+      });
+    }
+    
+    // Cache recommendations
+    if (this.metrics.cache.hitRate < 70) {
+      recommendations.push({
+        type: 'cache',
+        priority: 'medium',
+        message: 'Cache hit rate is low - consider increasing memory cache size'
+      });
+    }
+    
+    // Download recommendations
+    if (this.metrics.downloads.averageSpeed < this.thresholds.downloadSpeed) {
+      recommendations.push({
+        type: 'download',
+        priority: 'medium',
+        message: 'Download speed is below recommended threshold'
+      });
+    }
+    
+    // Lazy loading recommendations
+    if (this.metrics.lazyLoading.averageLoadTime > this.thresholds.loadTime) {
+      recommendations.push({
+        type: 'lazy-loading',
+        priority: 'medium',
+        message: 'Directory loading time is high - consider optimizing prefetching'
+      });
+    }
+    
+    return recommendations;
+  }
+
+  // Start performance monitoring
+  startMonitoring() {
+    if (this.monitoringInterval) {
+      clearInterval(this.monitoringInterval);
+    }
+    
+    this.monitoringInterval = setInterval(() => {
+      this.updateHistory();
+      
+      // Check for system health degradation
+      const health = this.calculateSystemHealth();
+      if (health < 70) {
+        this.addAlert({
+          type: 'health',
+          category: 'system',
+          message: `System health degraded to ${health}%`,
+          severity: 'warning',
+          timestamp: Date.now(),
+          health
+        });
+      }
+    }, 60000); // Check every minute
+  }
+
+  // Stop performance monitoring
+  stopMonitoring() {
+    if (this.monitoringInterval) {
+      clearInterval(this.monitoringInterval);
+      this.monitoringInterval = null;
+    }
+  }
+
+  // Format uptime for display
+  formatUptime(milliseconds) {
+    const seconds = Math.floor(milliseconds / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    
+    if (days > 0) {
+      return `${days}d ${hours % 24}h ${minutes % 60}m`;
+    } else if (hours > 0) {
+      return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${seconds % 60}s`;
+    } else {
+      return `${seconds}s`;
+    }
+  }
+}
+
+// Global performance monitor instance
+const performanceMonitor = new PerformanceMonitor();
+
+// Wrapper functions for performance monitoring
+function getPerformanceMetrics() {
+  return performanceMonitor.getMetrics();
+}
+
+function getPerformanceSummary() {
+  return performanceMonitor.getPerformanceSummary();
+}
+
+function getPerformanceAlerts() {
+  return performanceMonitor.alerts;
+}
+
+function clearPerformanceAlerts() {
+  performanceMonitor.alerts = [];
+  return { success: true, message: 'Performance alerts cleared' };
+}
+
+function generatePerformanceReport() {
+  const metrics = getPerformanceMetrics();
+  const summary = getPerformanceSummary();
+  
+  return {
+    reportGenerated: Date.now(),
+    metrics,
+    summary,
+    recommendations: summary.recommendations,
+    systemHealth: summary.overallScore,
+    uptime: metrics.uptimeFormatted
+  };
+}
+
+// Global enhanced downloader instance
+const enhancedDownloader = new EnhancedFileDownloader();
+
 // Read cache from file
 async function readCache(username = null) {
   try {
@@ -1205,22 +2213,78 @@ class LazyDirectoryLoader {
     this.visibleDirectories = new Set(); // Currently visible directories
     this.prefetchQueue = new Set(); // Directories to prefetch
     this.directoryCache = new Map(); // Per-directory cache with TTL
+    
+    // Enhanced memory-based cache layer with multiple cache strategies
+    this.memoryCache = new Map(); // LFU cache for hot data
+    this.accessFrequency = new Map(); // Track access frequency
+    this.accessRecency = new Map(); // Track recent access for hybrid strategy
+    this.maxMemoryCacheSize = 400; // Increased memory cache size
+    this.memoryHitCount = 0;
+    this.memoryCacheRequests = 0;
+    
+    // Performance optimization constants
+    this.LOAD_TIMEOUT = 8000; // 8 seconds timeout for directory loading
+    this.PREFETCH_BATCH_SIZE = 5; // Number of directories to prefetch at once
+    this.PREFETCH_DELAY = 300; // Reduced delay for faster prefetching
+    this.CACHE_PROMOTION_THRESHOLD = 3; // Access count to promote to memory cache
+    
+    // Load prioritization system
+    this.loadPriorityQueue = new Map(); // Track load priorities
+    this.directorySizeEstimates = new Map(); // Track estimated directory sizes
+    this.lastAccessTimes = new Map(); // Track last access times
+    
+    // Adaptive prefetching
+    this.adaptivePrefetchEnabled = true;
+    this.userBehaviorLearning = true;
+    this.learningData = {
+      navigationPatterns: new Map(),
+      accessHeatmap: new Map(),
+      predictionAccuracy: 0
+    };
   }
 
   // Load directory only when requested (like Windows Explorer)
   async loadDirectoryOnDemand(dirPath, options = {}) {
     const { forceRefresh = false, priority = 'normal', usePooled = false } = options;
     
+    // Update learning data for user behavior
+    if (this.userBehaviorLearning) {
+      this._updateLearningData(dirPath);
+    }
+    
     // Check if already loading
     if (this.loadingQueue.has(dirPath)) {
+      // Update priority for concurrent load
+      if (priority === 'high') {
+        this.loadPriorityQueue.set(dirPath, priority);
+      }
       return await this.loadingQueue.get(dirPath);
     }
 
-    // Check cache first (per-directory TTL)
+    // Check memory cache first (fastest)
+    if (!forceRefresh) {
+      const memoryData = this.getFromMemoryCache(dirPath);
+      if (memoryData) {
+        this._updateAccessMetrics(dirPath, 'memory');
+        // Trigger intelligent prefetching based on user behavior
+        this._intelligentPrefetch(dirPath);
+        return memoryData.data;
+      }
+    }
+
+    // Check disk cache second (with adaptive TTL)
     if (!forceRefresh) {
       const cached = this.getFromDirectoryCache(dirPath);
       if (cached) {
-        console.log(`Using cached data for directory: ${dirPath}`);
+        console.log(`Using disk cached data for directory: ${dirPath}`);
+        
+        // Store in memory cache if frequently accessed
+        if (this._shouldCacheInMemory(dirPath)) {
+          this.setMemoryCache(dirPath, cached);
+        }
+        
+        // Trigger intelligent prefetching based on cached content
+        this._intelligentPrefetch(dirPath, cached);
         return cached;
       }
     }
@@ -1231,7 +2295,17 @@ class LazyDirectoryLoader {
 
     try {
       const result = await loadPromise;
+      
+      // Store in disk cache
       this.setDirectoryCache(dirPath, result);
+      
+      // Store in memory cache if it should be cached
+      if (this._shouldCacheInMemory(dirPath)) {
+        this.setMemoryCache(dirPath, result);
+      }
+      
+      // Trigger immediate prefetching for adjacent directories after successful load
+      this._immediatePrefetch(dirPath);
       return result;
     } finally {
       this.loadingQueue.delete(dirPath);
@@ -1292,8 +2366,21 @@ class LazyDirectoryLoader {
 
   // Set visible directories for background refresh
   setVisibleDirectories(directories) {
+    const previousVisible = new Set(this.visibleDirectories);
     this.visibleDirectories.clear();
     directories.forEach(dir => this.visibleDirectories.add(dir));
+    
+    // Promote newly visible directories from disk cache to memory cache
+    directories.forEach(dir => {
+      if (!previousVisible.has(dir)) {
+        const diskCacheData = this.getFromDirectoryCache(dir);
+        if (diskCacheData && this._shouldCacheInMemory(dir)) {
+          this.setMemoryCache(dir, diskCacheData);
+          console.log(`[LazyLoader] Promoted ${dir} to memory cache`);
+        }
+      }
+    });
+    
     this._schedulePrefetch();
   }
 
@@ -1319,34 +2406,259 @@ class LazyDirectoryLoader {
 
     this.backgroundWorker = setTimeout(async () => {
       await this._prefetchAdjacentDirectories();
-    }, 2000); // Wait 2 seconds before prefetching
+    }, 500); // Reduced delay for more aggressive prefetching
   }
 
-  // Prefetch adjacent directories in background
+  // Aggressive prefetching of adjacent and child directories
   async _prefetchAdjacentDirectories() {
     const adjacentDirs = new Set();
+    const childDirs = new Set();
     
-    // Find parent and sibling directories
+    // Find parent, sibling, and child directories
     this.visibleDirectories.forEach(dirPath => {
       const parentPath = path.posix.dirname(dirPath);
       if (parentPath !== dirPath && parentPath !== '.') {
         adjacentDirs.add(parentPath);
       }
+      
+      // Add potential child directories from cache
+      const cachedData = this.getFromDirectoryCache(dirPath);
+      if (cachedData && cachedData.children) {
+        cachedData.children.forEach(child => {
+          if (child.type === 'directory') {
+            const childPath = path.posix.join(dirPath, child.name);
+            childDirs.add(childPath);
+          }
+        });
+      }
     });
 
-    // Prefetch with low priority
-    const prefetchPromises = Array.from(adjacentDirs).map(async (dirPath) => {
+    // Prefetch adjacent directories with medium priority
+    const adjacentPromises = Array.from(adjacentDirs).map(async (dirPath) => {
       if (!this.visibleDirectories.has(dirPath) && !this.loadingQueue.has(dirPath)) {
         try {
-          await this.loadDirectoryOnDemand(dirPath, { priority: 'prefetch' });
-          console.log(`Prefetched: ${dirPath}`);
+          await this.loadDirectoryOnDemand(dirPath, { priority: 'medium' });
+          console.log(`Prefetched adjacent: ${dirPath}`);
         } catch (error) {
-          console.warn(`Prefetch failed for ${dirPath}:`, error.message);
+          console.warn(`Adjacent prefetch failed for ${dirPath}:`, error.message);
         }
       }
     });
 
-    await Promise.allSettled(prefetchPromises);
+    // Prefetch child directories with low priority
+    const childPromises = Array.from(childDirs).slice(0, 5).map(async (dirPath) => {
+      if (!this.visibleDirectories.has(dirPath) && !this.loadingQueue.has(dirPath)) {
+        try {
+          await this.loadDirectoryOnDemand(dirPath, { priority: 'prefetch' });
+          console.log(`Prefetched child: ${dirPath}`);
+        } catch (error) {
+          console.warn(`Child prefetch failed for ${dirPath}:`, error.message);
+        }
+      }
+    });
+
+    await Promise.allSettled([...adjacentPromises, ...childPromises]);
+  }
+
+  // Immediate prefetching when user navigates to a directory
+  async _immediatePrefetch(dirPath) {
+    const cachedData = this.getFromDirectoryCache(dirPath);
+    if (cachedData && cachedData.children) {
+      const childDirectories = cachedData.children
+        .filter(child => child.type === 'directory')
+        .slice(0, 3) // Limit to first 3 child directories
+        .map(child => path.posix.join(dirPath, child.name));
+
+      const prefetchPromises = childDirectories.map(async (childPath) => {
+        if (!this.loadingQueue.has(childPath)) {
+          try {
+            await this.loadDirectoryOnDemand(childPath, { priority: 'medium' });
+            console.log(`Immediately prefetched: ${childPath}`);
+          } catch (error) {
+            console.warn(`Immediate prefetch failed for ${childPath}:`, error.message);
+          }
+        }
+      });
+
+      Promise.allSettled(prefetchPromises); // Don't await, run in background
+    }
+  }
+
+  // Intelligent prefetching based on user behavior patterns
+  async _intelligentPrefetch(dirPath, cachedData = null) {
+    if (!this.adaptivePrefetchEnabled) return;
+
+    try {
+      // Get predicted directories based on user behavior
+      const predictedDirs = this._predictNextDirectories(dirPath, cachedData);
+      
+      // Batch prefetch with priority
+      const batchSize = Math.min(this.PREFETCH_BATCH_SIZE, predictedDirs.length);
+      const topPredictions = predictedDirs.slice(0, batchSize);
+
+      const prefetchPromises = topPredictions.map(async (predPath) => {
+        if (!this.visibleDirectories.has(predPath) && 
+            !this.loadingQueue.has(predPath) && 
+            !this.memoryCache.has(predPath)) {
+          try {
+            await this.loadDirectoryOnDemand(predPath, { 
+              priority: 'prefetch',
+              usePooled: true 
+            });
+            console.log(`Intelligently prefetched: ${predPath}`);
+          } catch (error) {
+            console.warn(`Intelligent prefetch failed for ${predPath}:`, error.message);
+          }
+        }
+      });
+
+      // Run prefetching with controlled concurrency
+      const results = await Promise.allSettled(prefetchPromises);
+      const successCount = results.filter(r => r.status === 'fulfilled').length;
+      
+      if (successCount > 0) {
+        console.log(`Intelligent prefetch completed: ${successCount}/${batchSize} directories`);
+      }
+    } catch (error) {
+      console.warn('Intelligent prefetch failed:', error.message);
+    }
+  }
+
+  // Predict next directories based on user behavior
+  _predictNextDirectories(currentPath, cachedData = null) {
+    const predictions = new Set();
+    
+    // Add navigation pattern predictions
+    const patterns = this.learningData.navigationPatterns.get(currentPath);
+    if (patterns && patterns.nextPaths) {
+      patterns.nextPaths.forEach(path => predictions.add(path));
+    }
+
+    // Add heatmap-based predictions
+    const heatmap = this.learningData.accessHeatmap.get(currentPath);
+    if (heatmap && heatmap.frequentNeighbors) {
+      heatmap.frequentNeighbors.forEach(path => predictions.add(path));
+    }
+
+    // Add directory-based predictions from cache
+    if (cachedData && cachedData.directories) {
+      cachedData.directories.slice(0, 3).forEach(dir => {
+        const childPath = path.posix.join(currentPath, dir.name);
+        predictions.add(childPath);
+      });
+    }
+
+    // Add parent and sibling predictions
+    const parentPath = path.posix.dirname(currentPath);
+    if (parentPath !== '.' && parentPath !== currentPath) {
+      predictions.add(parentPath);
+    }
+
+    return Array.from(predictions).slice(0, 8); // Limit predictions
+  }
+
+  // Update learning data for user behavior
+  _updateLearningData(dirPath) {
+    // Update access frequency and recency
+    const currentFreq = this.accessFrequency.get(dirPath) || 0;
+    this.accessFrequency.set(dirPath, currentFreq + 1);
+    
+    this.accessRecency.set(dirPath, Date.now());
+    this.lastAccessTimes.set(dirPath, Date.now());
+
+    // Update navigation patterns
+    const visibleArray = Array.from(this.visibleDirectories);
+    const currentIndex = visibleArray.indexOf(dirPath);
+    if (currentIndex !== -1) {
+      // Learn navigation sequence
+      if (!this.learningData.navigationPatterns.has(dirPath)) {
+        this.learningData.navigationPatterns.set(dirPath, {
+          nextPaths: new Set(),
+          previousPaths: new Set(),
+          accessCount: 0
+        });
+      }
+
+      const patterns = this.learningData.navigationPatterns.get(dirPath);
+      patterns.accessCount++;
+
+      // Learn next paths
+      if (currentIndex < visibleArray.length - 1) {
+        const nextPath = visibleArray[currentIndex + 1];
+        patterns.nextPaths.add(nextPath);
+      }
+
+      // Learn previous paths
+      if (currentIndex > 0) {
+        const prevPath = visibleArray[currentIndex - 1];
+        patterns.previousPaths.add(prevPath);
+      }
+    }
+
+    // Update access heatmap
+    const parentPath = path.posix.dirname(dirPath);
+    if (parentPath !== '.' && parentPath !== dirPath) {
+      if (!this.learningData.accessHeatmap.has(parentPath)) {
+        this.learningData.accessHeatmap.set(parentPath, {
+          childAccessCount: new Map(),
+          totalAccess: 0
+        });
+      }
+
+      const heatmap = this.learningData.accessHeatmap.get(parentPath);
+      const childCount = heatmap.childAccessCount.get(dirPath) || 0;
+      heatmap.childAccessCount.set(dirPath, childCount + 1);
+      heatmap.totalAccess++;
+    }
+
+    // Update prediction accuracy
+    this._updatePredictionAccuracy();
+  }
+
+  // Update prediction accuracy metrics
+  _updatePredictionAccuracy() {
+    // This is a simplified accuracy calculation
+    // In a production system, you'd track successful predictions
+    const totalPatterns = Array.from(this.learningData.navigationPatterns.values())
+      .reduce((sum, p) => sum + p.nextPaths.size, 0);
+    
+    if (totalPatterns > 0) {
+      this.learningData.predictionAccuracy = Math.min(0.8, totalPatterns * 0.1);
+    }
+  }
+
+  // Update access metrics for cache performance
+  _updateAccessMetrics(dirPath, cacheType) {
+    if (cacheType === 'memory') {
+      this.memoryHitCount++;
+    }
+    this.memoryCacheRequests++;
+  }
+
+  // Enhanced cache promotion logic
+  _shouldCacheInMemory(dirPath) {
+    const freq = this.accessFrequency.get(dirPath) || 0;
+    const recentAccess = this.lastAccessTimes.get(dirPath) || 0;
+    const timeSinceAccess = Date.now() - recentAccess;
+
+    // Promote to memory cache if:
+    // 1. Frequently accessed (meets threshold)
+    // 2. Recently accessed (within last 5 minutes)
+    // 3. Frequently accessed parent directories
+    const meetsFrequencyThreshold = freq >= this.CACHE_PROMOTION_THRESHOLD;
+    const isRecentAccess = timeSinceAccess < 5 * 60 * 1000; // 5 minutes
+    const hasFrequentParent = this._hasFrequentParentDirectory(dirPath);
+
+    return meetsFrequencyThreshold || isRecentAccess || hasFrequentParent;
+  }
+
+  // Check if parent directory is frequently accessed
+  _hasFrequentParentDirectory(dirPath) {
+    const parentPath = path.posix.dirname(dirPath);
+    if (parentPath === '.' || parentPath === dirPath) return false;
+
+    const parentFreq = this.accessFrequency.get(parentPath) || 0;
+    return parentFreq >= this.CACHE_PROMOTION_THRESHOLD;
   }
 
   // Per-directory cache management
@@ -1375,8 +2687,8 @@ class LazyDirectoryLoader {
 
   // Dynamic TTL based on directory access patterns
   _getTTLForDirectory(dirPath) {
-    const baseTTL = 5 * 60 * 1000; // 5 minutes base
-    const maxTTL = 30 * 60 * 1000; // 30 minutes max
+    const baseTTL = 2 * 60 * 1000; // 2 minutes base (optimized for responsiveness)
+    const maxTTL = 60 * 60 * 1000; // 60 minutes max (increased for better caching)
     
     // Frequently accessed directories get longer TTL
     if (this.visibleDirectories.has(dirPath)) {
@@ -1389,15 +2701,100 @@ class LazyDirectoryLoader {
   // Clear cache for specific directory
   clearDirectoryCache(dirPath) {
     this.directoryCache.delete(dirPath);
+    // Also clear from memory cache for consistency
+    this.clearMemoryCache(dirPath);
+  }
+
+  // Memory cache management methods
+  getFromMemoryCache(dirPath) {
+    this.memoryCacheRequests++;
+    
+    if (this.memoryCache.has(dirPath)) {
+      this.memoryHitCount++;
+      // Move to end (most recently used)
+      const data = this.memoryCache.get(dirPath);
+      this.memoryCache.delete(dirPath);
+      this.memoryCache.set(dirPath, data);
+      
+      // Update access frequency
+      this.accessFrequency.set(dirPath, (this.accessFrequency.get(dirPath) || 0) + 1);
+      
+      console.log(`Memory cache hit for: ${dirPath}`);
+      return data;
+    }
+    
+    return null;
+  }
+  
+  setMemoryCache(dirPath, data) {
+    // Check if we need to evict old entries
+    if (this.memoryCache.size >= this.maxMemoryCacheSize && !this.memoryCache.has(dirPath)) {
+      // Remove least recently used (first entry)
+      const firstKey = this.memoryCache.keys().next().value;
+      this.memoryCache.delete(firstKey);
+      this.accessFrequency.delete(firstKey);
+      console.log(`Evicted from memory cache: ${firstKey}`);
+    }
+    
+    // Add/update entry (will be at the end = most recently used)
+    this.memoryCache.set(dirPath, {
+      data: data,
+      timestamp: Date.now(),
+      size: this._estimateDataSize(data)
+    });
+    
+    // Initialize access frequency
+    if (!this.accessFrequency.has(dirPath)) {
+      this.accessFrequency.set(dirPath, 1);
+    }
+    
+    console.log(`Added to memory cache: ${dirPath} (${this.memoryCache.size}/${this.maxMemoryCacheSize})`);
+  }
+  
+  clearMemoryCache(dirPath = null) {
+    if (dirPath) {
+      this.memoryCache.delete(dirPath);
+      this.accessFrequency.delete(dirPath);
+    } else {
+      this.memoryCache.clear();
+      this.accessFrequency.clear();
+      this.memoryHitCount = 0;
+      this.memoryCacheRequests = 0;
+    }
+  }
+  
+  _estimateDataSize(data) {
+    // Rough estimation of data size in bytes
+    if (!data || !data.children) return 100;
+    return data.children.length * 200; // Approximate 200 bytes per file entry
+  }
+  
+  _shouldCacheInMemory(dirPath) {
+    // Cache in memory if:
+    // 1. Directory is visible (currently being viewed)
+    // 2. Has been accessed multiple times
+    // 3. Is a frequently accessed parent directory
+    const accessCount = this.accessFrequency.get(dirPath) || 0;
+    const isVisible = this.visibleDirectories.has(dirPath);
+    const isFrequentlyAccessed = accessCount >= 2;
+    
+    return isVisible || isFrequentlyAccessed;
   }
 
   // Get cache statistics
   getCacheStats() {
+    const memoryHitRate = this.memoryCacheRequests > 0 ? 
+      (this.memoryHitCount / this.memoryCacheRequests * 100).toFixed(2) : 0;
+    
     return {
       cachedDirectories: this.directoryCache.size,
       visibleDirectories: this.visibleDirectories.size,
       loadingQueue: this.loadingQueue.size,
-      prefetchQueue: this.prefetchQueue.size
+      prefetchQueue: this.prefetchQueue.size,
+      memoryCacheSize: this.memoryCache.size,
+      memoryHitRate: `${memoryHitRate}%`,
+      memoryHits: this.memoryHitCount,
+      memoryCacheRequests: this.memoryCacheRequests
     };
   }
 }
@@ -1449,22 +2846,33 @@ class BackgroundDirectoryWorker {
   constructor() {
     this.isRunning = false;
     this.intervalId = null;
-    this.refreshInterval = 30000; // 30 seconds default
+    this.refreshInterval = 12000; // 12 seconds default (optimized from 30s)
+    this.baseRefreshInterval = 12000; // Base interval for calculation
+    this.maxRefreshInterval = 60000; // Maximum interval when idle
     this.monitoredDirectories = new Set();
     this.lastActivity = Date.now();
+    
+    // Smart refresh settings
+    this.smartRefreshEnabled = true;
+    this.manualRefreshTriggered = false;
+    this.lastManualRefresh = 0;
+    this.autoRefreshThreshold = 30000; // 30 seconds of inactivity before auto refresh
+    this.userActionRefreshCount = 0;
+    this.userActionRefreshLimit = 5; // Max consecutive auto refreshes
   }
 
   // Start background monitoring
-  start(refreshInterval = 30000) {
+  start(refreshInterval = 15000, enableSmartRefresh = true) {
     if (this.isRunning) {
       console.log('Background worker already running');
       return;
     }
 
     this.refreshInterval = refreshInterval;
+    this.smartRefreshEnabled = enableSmartRefresh;
     this.isRunning = true;
     
-    console.log(`Starting background directory worker (refresh every ${refreshInterval}ms)`);
+    console.log(`Starting background directory worker (refresh every ${refreshInterval}ms, smart refresh: ${enableSmartRefresh})`);
     
     this.intervalId = setInterval(async () => {
       await this._performBackgroundTasks();
@@ -1503,6 +2911,48 @@ class BackgroundDirectoryWorker {
   // Update activity timestamp
   updateActivity() {
     this.lastActivity = Date.now();
+    this.userActionRefreshCount = 0; // Reset counter on user action
+  }
+
+  // Trigger manual refresh (user-initiated)
+  triggerManualRefresh() {
+    this.manualRefreshTriggered = true;
+    this.lastManualRefresh = Date.now();
+    console.log('Manual refresh triggered by user');
+  }
+
+  // Check if smart refresh should run
+  shouldRunSmartRefresh() {
+    if (!this.smartRefreshEnabled) {
+      return false;
+    }
+
+    // Always run manual refresh immediately
+    if (this.manualRefreshTriggered) {
+      this.manualRefreshTriggered = false;
+      return true;
+    }
+
+    // Only run auto refresh if user has been inactive for threshold
+    const inactiveTime = Date.now() - this.lastActivity;
+    if (inactiveTime < this.autoRefreshThreshold) {
+      return false;
+    }
+
+    // Limit consecutive auto refreshes
+    if (this.userActionRefreshCount >= this.userActionRefreshLimit) {
+      console.log('Auto refresh limit reached, waiting for user action');
+      return false;
+    }
+
+    return true;
+  }
+
+  // Increment user action refresh counter
+  incrementAutoRefreshCount() {
+    if (this.userActionRefreshCount < this.userActionRefreshLimit) {
+      this.userActionRefreshCount++;
+    }
   }
 
   // Check if user is inactive
@@ -1519,9 +2969,17 @@ class BackgroundDirectoryWorker {
         return;
       }
 
+      // Only perform smart refresh when appropriate
+      if (!this.shouldRunSmartRefresh()) {
+        console.log('Smart refresh conditions not met, skipping background tasks');
+        return;
+      }
+
+      console.log('Performing smart background refresh');
+
       // Refresh visible directories first (high priority)
       if (lazyLoader.visibleDirectories.size > 0) {
-        await lazyLoader.refreshVisibleDirectories();
+        await this._smartRefreshVisibleDirectories();
       }
 
       // Refresh monitored directories (medium priority)
@@ -1529,12 +2987,43 @@ class BackgroundDirectoryWorker {
         await this._refreshMonitoredDirectories();
       }
 
+      // Warm up connection pool during idle time (medium priority)
+      await this._warmUpConnectionPool();
+
       // Cleanup old cache entries (low priority)
       await this._cleanupOldCacheEntries();
+
+      // Increment auto refresh counter
+      this.incrementAutoRefreshCount();
 
     } catch (error) {
       console.warn('Background worker task failed:', error.message);
     }
+  }
+
+  // Smart refresh visible directories with user-initiated priority
+  async _smartRefreshVisibleDirectories() {
+    const refreshPromises = Array.from(this.visibleDirectories).map(async (dirPath) => {
+      try {
+        // Use force refresh only for manual refreshes
+        const shouldForceRefresh = this.manualRefreshTriggered;
+        await lazyLoader.loadDirectoryOnDemand(dirPath, { 
+          forceRefresh: shouldForceRefresh, 
+          priority: 'background-smart',
+          usePooled: true
+        });
+        
+        if (shouldForceRefresh) {
+          console.log(`Manual smart refreshed: ${dirPath}`);
+        } else {
+          console.log(`Auto smart refreshed: ${dirPath}`);
+        }
+      } catch (error) {
+        console.warn(`Smart refresh failed for ${dirPath}:`, error.message);
+      }
+    });
+
+    await Promise.allSettled(refreshPromises);
   }
 
   // Refresh monitored directories
@@ -1572,9 +3061,43 @@ class BackgroundDirectoryWorker {
       const toRemove = entries.slice(0, entries.length - maxCacheSize);
       toRemove.forEach(([dirPath]) => {
         lazyLoader.directoryCache.delete(dirPath);
+        // Also clean from memory cache
+        lazyLoader.clearMemoryCache(dirPath);
       });
       
       console.log(`Cleaned up ${toRemove.length} old cache entries`);
+    }
+    
+    // Also cleanup memory cache if it's getting too large
+    if (lazyLoader.memoryCache.size > lazyLoader.maxMemoryCacheSize) {
+      const memoryEntries = Array.from(lazyLoader.memoryCache.entries());
+      // Sort by access frequency (least accessed first)
+      memoryEntries.sort((a, b) => {
+        const freqA = lazyLoader.accessFrequency.get(a[0]) || 0;
+        const freqB = lazyLoader.accessFrequency.get(b[0]) || 0;
+        return freqA - freqB;
+      });
+      
+      const memoryToRemove = memoryEntries.slice(0, memoryEntries.length - lazyLoader.maxMemoryCacheSize);
+      memoryToRemove.forEach(([dirPath]) => {
+        lazyLoader.clearMemoryCache(dirPath);
+      });
+      
+      console.log(`Cleaned up ${memoryToRemove.length} memory cache entries`);
+    }
+  }
+
+  // Warm up connection pool during idle time
+  async _warmUpConnectionPool() {
+    try {
+      // Only warm up if user is inactive for more than 30 seconds
+      const inactiveTime = Date.now() - this.lastActivity;
+      if (inactiveTime > 30000) {
+        console.log('Warming up connection pool during idle time');
+        await connectionPool.warmUp(2);
+      }
+    } catch (error) {
+      console.warn('Connection pool warm-up failed:', error.message);
     }
   }
 
@@ -1594,12 +3117,22 @@ class BackgroundDirectoryWorker {
 const backgroundWorker = new BackgroundDirectoryWorker();
 
 // Background worker control functions
-function startBackgroundWorker(refreshInterval = 30000) {
-  backgroundWorker.start(refreshInterval);
+function startBackgroundWorker(refreshInterval = 15000, enableSmartRefresh = true) {
+  backgroundWorker.start(refreshInterval, enableSmartRefresh);
 }
 
 function stopBackgroundWorker() {
   backgroundWorker.stop();
+}
+
+// Manual refresh function for user-triggered refreshes
+function triggerManualRefresh() {
+  if (backgroundWorker.isRunning) {
+    backgroundWorker.triggerManualRefresh();
+    backgroundWorker.updateActivity(); // Update activity timestamp
+    return { success: true, message: 'Manual refresh triggered' };
+  }
+  return { success: false, message: 'Background worker not running' };
 }
 
 function addMonitoredDirectory(dirPath) {
@@ -1616,6 +3149,55 @@ function updateWorkerActivity() {
 
 function getBackgroundWorkerStats() {
   return backgroundWorker.getStats();
+}
+
+// Enhanced lazy loading utility functions
+function getIntelligentPrefetchStats() {
+  return {
+    adaptivePrefetchEnabled: lazyLoader.adaptivePrefetchEnabled,
+    predictionAccuracy: lazyLoader.learningData.predictionAccuracy,
+    prefetchQueueSize: lazyLoader.prefetchQueue.size,
+    memoryCacheHitRate: lazyLoader.memoryCacheRequests > 0 
+      ? (lazyLoader.memoryHitCount / lazyLoader.memoryCacheRequests).toFixed(3)
+      : 0,
+    learningData: lazyLoader.learningData
+  };
+}
+
+function enableAdaptivePrefetch() {
+  lazyLoader.adaptivePrefetchEnabled = true;
+  lazyLoader.userBehaviorLearning = true;
+  return { success: true, message: 'Adaptive prefetch enabled' };
+}
+
+function disableAdaptivePrefetch() {
+  lazyLoader.adaptivePrefetchEnabled = false;
+  lazyLoader.userBehaviorLearning = false;
+  return { success: true, message: 'Adaptive prefetch disabled' };
+}
+
+function getUserBehaviorData() {
+  return {
+    navigationPatterns: Array.from(lazyLoader.learningData.navigationPatterns.entries()),
+    accessHeatmap: Array.from(lazyLoader.learningData.accessHeatmap.entries()),
+    accessFrequency: Array.from(lazyLoader.accessFrequency.entries()),
+    accessRecency: Array.from(lazyLoader.accessRecency.entries())
+  };
+}
+
+function getCachePerformanceMetrics() {
+  return {
+    memoryCacheSize: lazyLoader.memoryCache.size,
+    maxMemoryCacheSize: lazyLoader.maxMemoryCacheSize,
+    directoryCacheSize: lazyLoader.directoryCache.size,
+    memoryHitRate: lazyLoader.memoryCacheRequests > 0 
+      ? (lazyLoader.memoryHitCount / lazyLoader.memoryCacheRequests).toFixed(3)
+      : 0,
+    totalRequests: lazyLoader.memoryCacheRequests,
+    promotedToMemoryCache: Array.from(lazyLoader.accessFrequency.entries())
+      .filter(([_, count]) => count >= lazyLoader.CACHE_PROMOTION_THRESHOLD).length,
+    averageDirectoryLoadTime: lazyLoader.getAverageLoadTime ? lazyLoader.getAverageLoadTime() : 0
+  };
 }
 
 // Refresh cache by rebuilding directory structure
@@ -2440,11 +4022,32 @@ module.exports = {
   refreshVisibleDirectories,
   getLazyLoadStats,
   clearLazyCache,
+  // Enhanced Lazy Loading Functions
+  getIntelligentPrefetchStats,
+  enableAdaptivePrefetch,
+  disableAdaptivePrefetch,
+  getUserBehaviorData,
+  getCachePerformanceMetrics,
   // Background Worker Functions
   startBackgroundWorker,
   stopBackgroundWorker,
+  triggerManualRefresh,
   addMonitoredDirectory,
   removeMonitoredDirectory,
   updateWorkerActivity,
-  getBackgroundWorkerStats
-}
+  getBackgroundWorkerStats,
+  // Enhanced File Download Functions
+  downloadFileToTemp: (remotePath, options = {}) => enhancedDownloader.downloadFileToTemp(remotePath, options),
+  openFile: (filePath) => enhancedDownloader.openFile(filePath),
+  cancelFileDownload: (downloadId) => enhancedDownloader.cancelFileDownload(downloadId),
+  getDownloadStatus: (downloadId) => enhancedDownloader.getDownloadStatus(downloadId),
+  getDownloadStats: () => enhancedDownloader.getDownloadStats(),
+  initEnhancedDownloader: () => enhancedDownloader.initEnhancedDownloader(),
+  cleanupEnhancedDownloader: () => enhancedDownloader.cleanupEnhancedDownloader(),
+  // Performance Monitoring Functions
+  getPerformanceMetrics,
+  getPerformanceSummary,
+  getPerformanceAlerts,
+  clearPerformanceAlerts,
+  generatePerformanceReport
+};

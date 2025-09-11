@@ -98,11 +98,13 @@ async function toggleDirectoryLazy(treeItem, item, fullPath, expandIconEl) {
     } else {
         // Expand - load directory contents lazily
         try {
-            showLoading('Loading directory contents...');
+            // Show skeleton immediately for better UX
+            showDirectoryExpandSkeleton(childrenContainer);
+            expandIconEl.textContent = '▼';
+            expandIconEl.dataset.expanded = 'true';
             
             // Use lazy loading to get directory contents
             const result = await electronAPI.ftp.loadDirectoryLazy(fullPath, { priority: 'high' });
-            hideLoading();
             
             if (result.success && result.structure) {
                 // Clear and rebuild children
@@ -158,11 +160,11 @@ async function selectFTPPathLazy(path, item) {
     // If directory, load its contents lazily for the file list
     if (item.type === 'directory') {
         try {
-            showLoading('Loading directory contents...');
+            // Show skeleton screen immediately for better UX
+            showFileListSkeleton();
             
             // Use lazy loading to get directory contents
             const result = await electronAPI.ftp.loadDirectoryLazy(path, { priority: 'high' });
-            hideLoading();
             
             if (result.success && result.structure) {
                 // Render the file list with loaded contents
@@ -517,6 +519,9 @@ async function initializeConnections() {
 async function initializeFTP() {
     try {
         console.log('Initializing FTP with lazy loading...');
+        
+        // Show skeleton screen immediately for better UX
+        showTreeSkeleton();
         
         // Initialize username for cache system
         await electronAPI.ftp.initUsername();
@@ -1528,6 +1533,94 @@ function showNotification(text, type = 'info') {
 
 function hideNotification() {
     elements.notification.style.display = 'none';
+}
+
+// Skeleton screen functions
+function showTreeSkeleton() {
+    const tree = elements.ftpTree;
+    tree.innerHTML = `
+        <div class="skeleton-container">
+            <div class="skeleton-tree-item">
+                <div class="skeleton-icon"></div>
+                <div class="skeleton-text medium"></div>
+            </div>
+            <div class="skeleton-tree-item">
+                <div class="skeleton-icon"></div>
+                <div class="skeleton-text short"></div>
+            </div>
+            <div class="skeleton-tree-item">
+                <div class="skeleton-icon"></div>
+                <div class="skeleton-text long"></div>
+            </div>
+            <div class="skeleton-tree-item">
+                <div class="skeleton-icon"></div>
+                <div class="skeleton-text medium"></div>
+            </div>
+            <div class="skeleton-tree-item">
+                <div class="skeleton-icon"></div>
+                <div class="skeleton-text short"></div>
+            </div>
+        </div>
+    `;
+}
+
+function showFileListSkeleton() {
+    const fileList = elements.ftpFileList;
+    fileList.innerHTML = `
+        <div class="skeleton-file-item">
+            <div class="skeleton-file-icon"></div>
+            <div class="skeleton-file-details">
+                <div class="skeleton-file-name" style="width: 140px;"></div>
+                <div class="skeleton-file-meta"></div>
+            </div>
+        </div>
+        <div class="skeleton-file-item">
+            <div class="skeleton-file-icon"></div>
+            <div class="skeleton-file-details">
+                <div class="skeleton-file-name" style="width: 180px;"></div>
+                <div class="skeleton-file-meta"></div>
+            </div>
+        </div>
+        <div class="skeleton-file-item">
+            <div class="skeleton-file-icon"></div>
+            <div class="skeleton-file-details">
+                <div class="skeleton-file-name" style="width: 120px;"></div>
+                <div class="skeleton-file-meta"></div>
+            </div>
+        </div>
+        <div class="skeleton-file-item">
+            <div class="skeleton-file-icon"></div>
+            <div class="skeleton-file-details">
+                <div class="skeleton-file-name" style="width: 200px;"></div>
+                <div class="skeleton-file-meta"></div>
+            </div>
+        </div>
+        <div class="skeleton-file-item">
+            <div class="skeleton-file-icon"></div>
+            <div class="skeleton-file-details">
+                <div class="skeleton-file-name" style="width: 160px;"></div>
+                <div class="skeleton-file-meta"></div>
+            </div>
+        </div>
+    `;
+}
+
+function showDirectoryExpandSkeleton(childrenContainer) {
+    childrenContainer.innerHTML = `
+        <div class="skeleton-tree-item">
+            <div class="skeleton-icon"></div>
+            <div class="skeleton-text medium"></div>
+        </div>
+        <div class="skeleton-tree-item">
+            <div class="skeleton-icon"></div>
+            <div class="skeleton-text short"></div>
+        </div>
+        <div class="skeleton-tree-item">
+            <div class="skeleton-icon"></div>
+            <div class="skeleton-text long"></div>
+        </div>
+    `;
+    childrenContainer.style.display = 'block';
 }
 
 function updateFTPStatus(connected) {

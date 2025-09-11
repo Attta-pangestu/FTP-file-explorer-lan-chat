@@ -634,6 +634,98 @@ body {
     100% { transform: rotate(360deg); }
 }
 
+/* Skeleton Loading States */
+.skeleton-container {
+    padding: 16px;
+}
+
+.skeleton-tree-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 0;
+    margin-left: 16px;
+}
+
+.skeleton-tree-item:first-child {
+    margin-left: 0;
+}
+
+.skeleton-icon {
+    width: 16px;
+    height: 16px;
+    background: #e5e5e5;
+    border-radius: 2px;
+    margin-right: 8px;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.skeleton-text {
+    height: 14px;
+    background: #e5e5e5;
+    border-radius: 4px;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.skeleton-text.short {
+    width: 80px;
+}
+
+.skeleton-text.medium {
+    width: 120px;
+}
+
+.skeleton-text.long {
+    width: 160px;
+}
+
+.skeleton-file-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.skeleton-file-icon {
+    width: 32px;
+    height: 32px;
+    background: #e5e5e5;
+    border-radius: 4px;
+    margin-right: 12px;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.skeleton-file-details {
+    flex: 1;
+}
+
+.skeleton-file-name {
+    height: 16px;
+    background: #e5e5e5;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.skeleton-file-meta {
+    height: 12px;
+    background: #e5e5e5;
+    border-radius: 4px;
+    width: 60%;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes skeleton-pulse {
+    0% {
+        background-color: #e5e5e5;
+    }
+    50% {
+        background-color: #f0f0f0;
+    }
+    100% {
+        background-color: #e5e5e5;
+    }
+}
+
 /* Loading Overlay */
 .loading-overlay {
     position: fixed;
